@@ -79,14 +79,6 @@ export class EmotionGuardService {
     orderContext: OrderContext,
     signals: AssessmentSignals
   ): Promise<AssessmentResult> {
-    console.log('[DEBUG] EmotionGuard.checkBeforeTrade called with signals:', {
-      hasStressLevel: !!signals.stressLevel,
-      hasFacialMetrics: !!signals.facialMetrics,
-      facialMetrics: signals.facialMetrics,
-      hasFacialExpressionFeatures: !!signals.facialExpressionFeatures,
-      hasStroopTrials: !!signals.stroopTrials
-    });
-
     // Get user baseline and policy
     const [baseline, policy] = await Promise.all([
       storage.getUserBaseline(userId),
@@ -295,12 +287,7 @@ export class EmotionGuardService {
   }
 
   private calculateFacialExpressionScoreFromMetrics(metrics: AssessmentSignals['facialMetrics']): number {
-    console.log('[DEBUG] calculateFacialExpressionScoreFromMetrics called with:', metrics);
-    
-    if (!metrics || !metrics.isPresent) {
-      console.log('[DEBUG] No metrics or face not present, returning 0');
-      return 0;
-    }
+    if (!metrics || !metrics.isPresent) return 0;
     
     // Real MediaPipe-based facial stress indicators
     const stressIndicators = [

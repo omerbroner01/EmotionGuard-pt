@@ -97,17 +97,20 @@ export function useEmotionGuard(userId = 'demo-user') {
     return assessmentMutation.mutateAsync({ orderContext });
   }, [startTracking, assessmentMutation]);
 
-  const updateAssessment = useCallback((stroopResults?: any[], stressLevel?: number, facialMetrics?: FaceMetrics | null) => {
+  const updateAssessment = useCallback(async (stroopResults?: any[], stressLevel?: number, facialMetrics?: FaceMetrics | null) => {
     if (assessmentMutation.data) {
       // For updates, we use the same order context but with new data
       const currentData = assessmentMutation.variables;
       if (currentData) {
-        return assessmentMutation.mutateAsync({
+        const result = await assessmentMutation.mutateAsync({
           ...currentData,
           stroopResults,
           stressLevel,
           facialMetrics,
         });
+        // Ensure the updated assessment is set
+        setCurrentAssessment(result);
+        return result;
       }
     }
   }, [assessmentMutation]);
