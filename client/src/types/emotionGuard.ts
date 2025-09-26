@@ -35,6 +35,14 @@ export interface AssessmentSignals {
     blinkRate: number;
     gazeFixation: number;
   };
+  facialMetrics?: {
+    isPresent: boolean;
+    blinkRate: number;
+    eyeAspectRatio: number;
+    jawOpenness: number;
+    browFurrow: number;
+    gazeStability: number;
+  };
 }
 
 export interface AssessmentResult {

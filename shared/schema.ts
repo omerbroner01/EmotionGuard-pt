@@ -78,6 +78,7 @@ export const assessments = pgTable("assessments", {
   behavioralMetrics: jsonb("behavioral_metrics"), // mouse, keyboard patterns
   voiceProsodyScore: real("voice_prosody_score"),
   facialExpressionScore: real("facial_expression_score"),
+  facialMetrics: jsonb("facial_metrics"), // blink rate, brow furrow, gaze stability, etc.
   
   // Risk assessment
   riskScore: integer("risk_score").notNull(), // 0-100

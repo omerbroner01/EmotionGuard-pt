@@ -83,10 +83,10 @@ export default function Dashboard() {
               </span>
             </Link>
             <Link href="/admin">
-              <a className="flex items-center space-x-3 text-muted-foreground hover:text-foreground px-3 py-2 rounded-md hover:bg-muted smooth-transition" data-testid="nav-admin">
+              <div className="flex items-center space-x-3 text-muted-foreground hover:text-foreground px-3 py-2 rounded-md hover:bg-muted smooth-transition cursor-pointer" data-testid="nav-admin">
                 <span className="text-sm">⚙️</span>
                 <span>Admin Console</span>
-              </a>
+              </div>
             </Link>
             <a href="#" className="flex items-center space-x-3 text-muted-foreground hover:text-foreground px-3 py-2 rounded-md hover:bg-muted smooth-transition" data-testid="nav-analytics">
               <span className="text-sm">📊</span>

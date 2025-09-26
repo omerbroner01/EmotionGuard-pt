@@ -3,6 +3,7 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { emotionGuard } from '@/lib/emotionGuardSDK';
 import { useBiometrics } from './useBiometrics';
 import type { OrderContext, AssessmentResult, Policy, UserBaseline } from '@/types/emotionGuard';
+import type { FaceMetrics } from '@/lib/faceDetection';
 import { queryClient } from '@/lib/queryClient';
 
 export function useEmotionGuard(userId = 'demo-user') {
@@ -26,6 +27,7 @@ export function useEmotionGuard(userId = 'demo-user') {
       orderContext: OrderContext;
       stroopResults?: any[];
       stressLevel?: number;
+      facialMetrics?: FaceMetrics | null;
     }) => {
       const biometricData = stopTracking();
       
@@ -35,6 +37,7 @@ export function useEmotionGuard(userId = 'demo-user') {
         clickLatency: biometricData.clickLatency,
         stroopTrials: data.stroopResults,
         stressLevel: data.stressLevel,
+        facialMetrics: data.facialMetrics || undefined,
       };
 
       return emotionGuard.checkBeforeTrade(data.orderContext, signals, userId);
@@ -94,7 +97,7 @@ export function useEmotionGuard(userId = 'demo-user') {
     return assessmentMutation.mutateAsync({ orderContext });
   }, [startTracking, assessmentMutation]);
 
-  const updateAssessment = useCallback((stroopResults?: any[], stressLevel?: number) => {
+  const updateAssessment = useCallback((stroopResults?: any[], stressLevel?: number, facialMetrics?: FaceMetrics | null) => {
     if (assessmentMutation.data) {
       // For updates, we use the same order context but with new data
       const currentData = assessmentMutation.variables;
@@ -103,6 +106,7 @@ export function useEmotionGuard(userId = 'demo-user') {
           ...currentData,
           stroopResults,
           stressLevel,
+          facialMetrics,
         });
       }
     }

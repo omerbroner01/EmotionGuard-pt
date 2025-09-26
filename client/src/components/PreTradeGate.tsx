@@ -7,8 +7,10 @@ import { BreathingExercise } from './BreathingExercise';
 import { RiskDisplay } from './RiskDisplay';
 import { MicroJournal } from './MicroJournal';
 import { BiometricTracker } from './BiometricTracker';
+import { FaceDetectionDisplay } from './FaceDetectionDisplay';
 import { useEmotionGuard } from '@/hooks/useEmotionGuard';
 import type { OrderContext, StroopTrial } from '@/types/emotionGuard';
+import type { FaceMetrics } from '@/lib/faceDetection';
 import { Slider } from '@/components/ui/slider';
 import { Textarea } from '@/components/ui/textarea';
 
@@ -33,6 +35,7 @@ export function PreTradeGate({ onClose, orderAction, orderContext }: PreTradeGat
   const [stroopResults, setStroopResults] = useState<StroopTrial[]>([]);
   const [stressLevel, setStressLevel] = useState([5]);
   const [overrideReason, setOverrideReason] = useState('');
+  const [facialMetrics, setFacialMetrics] = useState<FaceMetrics | null>(null);
   
   const {
     currentAssessment,
@@ -78,12 +81,16 @@ export function PreTradeGate({ onClose, orderAction, orderContext }: PreTradeGat
 
   const handleSelfReportComplete = async () => {
     try {
-      // Update assessment with Stroop results and stress level
-      await updateAssessment(stroopResults, stressLevel[0]);
+      // Update assessment with Stroop results, stress level, and facial metrics
+      await updateAssessment(stroopResults, stressLevel[0], facialMetrics);
       setCurrentPhase('riskResults');
     } catch (error) {
       console.error('Assessment update failed:', error);
     }
+  };
+
+  const handleFacialMetrics = (metrics: FaceMetrics) => {
+    setFacialMetrics(metrics);
   };
 
   const handleProceedWithTrade = async () => {
@@ -145,7 +152,16 @@ export function PreTradeGate({ onClose, orderAction, orderContext }: PreTradeGat
             
             <Progress value={quickCheckProgress} className="mb-4" data-testid="progress-quickcheck" />
             
-            <BiometricTracker />
+            <div className="space-y-4">
+              <BiometricTracker />
+              <div className="border rounded-lg p-4">
+                <h4 className="text-sm font-semibold mb-2">Facial Stress Detection</h4>
+                <FaceDetectionDisplay 
+                  onMetricsUpdate={handleFacialMetrics}
+                  autoStart={true}
+                />
+              </div>
+            </div>
             
             <Button 
               variant="ghost" 

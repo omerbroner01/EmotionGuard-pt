@@ -310,43 +310,104 @@ export class RiskScoringService {
     confidence: number;
     stressDetected: boolean;
   } {
-    if (!signals.facialExpressionFeatures) {
-      return { score: 0, confidence: 0, stressDetected: false };
+    // Check for legacy format first
+    if (signals.facialExpressionFeatures) {
+      const features = signals.facialExpressionFeatures;
+      let riskScore = 0;
+      let stressDetected = false;
+
+      // Furrowed brow indicates concentration/stress
+      if (features.browFurrow > 0.7) {
+        riskScore += 12;
+        stressDetected = true;
+      } else if (features.browFurrow > 0.4) {
+        riskScore += 6;
+        stressDetected = true;
+      }
+
+      // Increased blink rate can indicate stress
+      if (features.blinkRate > 25) {
+        riskScore += 10;
+        stressDetected = true;
+      } else if (features.blinkRate > 18) {
+        riskScore += 5;
+        stressDetected = true;
+      }
+
+      // Poor gaze fixation indicates distraction
+      if (features.gazeFixation < 0.2) {
+        riskScore += 8;
+        stressDetected = true;
+      }
+
+      return {
+        score: Math.min(25, riskScore),
+        confidence: 0.6,
+        stressDetected,
+      };
     }
 
-    const features = signals.facialExpressionFeatures;
-    let riskScore = 0;
-    let stressDetected = false;
+    // Check for new enhanced facial metrics
+    if (signals.facialMetrics) {
+      const metrics = signals.facialMetrics;
+      let riskScore = 0;
+      let stressDetected = false;
 
-    // Furrowed brow indicates concentration/stress
-    if (features.browFurrow > 0.7) {
-      riskScore += 12;
-      stressDetected = true;
-    } else if (features.browFurrow > 0.4) {
-      riskScore += 6;
-      stressDetected = true;
+      // Face not present reduces confidence
+      if (!metrics.isPresent) {
+        return { score: 0, confidence: 0, stressDetected: false };
+      }
+
+      // Abnormal blink rate indicates stress
+      if (metrics.blinkRate > 30) {
+        riskScore += 15; // Very high blink rate
+        stressDetected = true;
+      } else if (metrics.blinkRate > 22) {
+        riskScore += 10; // High blink rate
+        stressDetected = true;
+      } else if (metrics.blinkRate < 8) {
+        riskScore += 8; // Unusually low blink rate (fixed stare)
+        stressDetected = true;
+      }
+
+      // Brow furrow indicates tension/stress
+      if (metrics.browFurrow > 0.7) {
+        riskScore += 12; // High brow tension
+        stressDetected = true;
+      } else if (metrics.browFurrow > 0.4) {
+        riskScore += 6; // Moderate tension
+        stressDetected = true;
+      }
+
+      // Poor gaze stability indicates distraction/anxiety
+      if (metrics.gazeStability < 0.3) {
+        riskScore += 10; // Very poor gaze stability
+        stressDetected = true;
+      } else if (metrics.gazeStability < 0.6) {
+        riskScore += 5; // Poor gaze stability
+        stressDetected = true;
+      }
+
+      // Eye aspect ratio - very low values may indicate fatigue
+      if (metrics.eyeAspectRatio < 0.15) {
+        riskScore += 8; // Eyes frequently closed (fatigue)
+        stressDetected = true;
+      }
+
+      // Jaw openness can indicate tension
+      if (metrics.jawOpenness > 0.3) {
+        riskScore += 6; // Jaw tension
+        stressDetected = true;
+      }
+
+      return {
+        score: Math.min(30, riskScore), // Increased cap for enhanced metrics
+        confidence: 0.8, // Higher confidence with detailed metrics
+        stressDetected,
+      };
     }
 
-    // Increased blink rate can indicate stress
-    if (features.blinkRate > 25) {
-      riskScore += 10;
-      stressDetected = true;
-    } else if (features.blinkRate > 18) {
-      riskScore += 5;
-      stressDetected = true;
-    }
-
-    // Poor gaze fixation indicates distraction
-    if (features.gazeFixation < 0.2) {
-      riskScore += 8;
-      stressDetected = true;
-    }
-
-    return {
-      score: Math.min(20, riskScore), // Cap facial component at 20%
-      confidence: 0.5, // Lower confidence in facial analysis
-      stressDetected,
-    };
+    return { score: 0, confidence: 0, stressDetected: false };
   }
 
   private analyzeContextualFactors(orderContext?: OrderContext): number {
