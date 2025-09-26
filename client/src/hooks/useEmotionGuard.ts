@@ -8,6 +8,14 @@ import { queryClient } from '@/lib/queryClient';
 
 export function useEmotionGuard(userId = 'demo-user') {
   const [currentAssessment, setCurrentAssessment] = useState<AssessmentResult | null>(null);
+  
+  // Debug currentAssessment changes
+  const originalSetCurrentAssessment = setCurrentAssessment;
+  const debugSetCurrentAssessment = useCallback((newAssessment: AssessmentResult | null) => {
+    console.log('🔧 setCurrentAssessment called with:', newAssessment);
+    console.log('🔧 Previous currentAssessment was:', currentAssessment);
+    originalSetCurrentAssessment(newAssessment);
+  }, [currentAssessment, originalSetCurrentAssessment]);
   const { startTracking, stopTracking, isTracking } = useBiometrics();
 
   // Get user baseline
@@ -29,7 +37,9 @@ export function useEmotionGuard(userId = 'demo-user') {
       stressLevel?: number;
       facialMetrics?: FaceMetrics | null;
     }) => {
+      console.log('🛠️ assessmentMutation.mutationFn called with data:', data);
       const biometricData = stopTracking();
+      console.log('🛠️ Biometric data collected:', biometricData);
       
       const signals = {
         mouseMovements: biometricData.mouseMovements,
@@ -40,13 +50,20 @@ export function useEmotionGuard(userId = 'demo-user') {
         facialMetrics: data.facialMetrics || undefined,
       };
 
-      return emotionGuard.checkBeforeTrade(data.orderContext, signals, userId);
+      console.log('🛠️ About to call emotionGuard.checkBeforeTrade with signals:', signals);
+      const result = await emotionGuard.checkBeforeTrade(data.orderContext, signals, userId);
+      console.log('🛠️ emotionGuard.checkBeforeTrade returned:', result);
+      return result;
     },
     onSuccess: (result) => {
-      setCurrentAssessment(result);
+      console.log('✅ assessmentMutation.onSuccess called with result:', result);
+      debugSetCurrentAssessment(result);
       // Invalidate relevant queries
       queryClient.invalidateQueries({ queryKey: ['/api/assessments', userId] });
       queryClient.invalidateQueries({ queryKey: ['/api/analytics/stats'] });
+    },
+    onError: (error) => {
+      console.error('❌ assessmentMutation.onError called with error:', error);
     },
   });
 
@@ -93,46 +110,49 @@ export function useEmotionGuard(userId = 'demo-user') {
   });
 
   const startAssessment = useCallback((orderContext: OrderContext) => {
+    console.log('🚀 startAssessment called with orderContext:', orderContext);
     startTracking();
+    console.log('🚀 About to call assessmentMutation.mutateAsync');
     return assessmentMutation.mutateAsync({ orderContext });
   }, [startTracking, assessmentMutation]);
 
   const updateAssessment = useCallback(async (stroopResults?: any[], stressLevel?: number, facialMetrics?: FaceMetrics | null) => {
-    if (assessmentMutation.data) {
-      // For updates, we use the same order context but with new data
-      const currentData = assessmentMutation.variables;
-      if (currentData) {
-        const result = await assessmentMutation.mutateAsync({
-          ...currentData,
-          stroopResults,
-          stressLevel,
-          facialMetrics,
-        });
-        // Ensure the updated assessment is set
-        setCurrentAssessment(result);
-        
-        // If we have facial metrics, also update the assessment with them via the dedicated endpoint
-        if (facialMetrics && result.assessmentId) {
-          try {
-            await fetch(`/api/emotion-guard/assessments/${result.assessmentId}/facial-metrics`, {
-              method: 'PUT',
-              headers: {
-                'Content-Type': 'application/json',
-              },
-              body: JSON.stringify({
-                facialMetrics,
-              }),
-            });
-            console.log('✓ Facial metrics successfully updated in assessment');
-          } catch (error) {
-            console.error('Failed to update facial metrics:', error);
-          }
-        }
-        
-        return result;
-      }
+    // Use the current assessment that was created by startAssessment
+    if (!currentAssessment) {
+      console.error('No current assessment to update');
+      return;
     }
-  }, [assessmentMutation]);
+
+    try {
+      // If we have facial metrics, update them via the dedicated endpoint
+      if (facialMetrics) {
+        await fetch(`/api/emotion-guard/assessments/${currentAssessment.assessmentId}/facial-metrics`, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            facialMetrics,
+          }),
+        });
+        console.log('✓ Facial metrics successfully updated in assessment');
+      }
+
+      // Fetch the updated assessment to get the latest data including calculated scores
+      const response = await fetch(`/api/emotion-guard/assessments/${currentAssessment.assessmentId}`);
+      if (response.ok) {
+        const updatedAssessment = await response.json();
+        debugSetCurrentAssessment(updatedAssessment);
+        return updatedAssessment;
+      } else {
+        console.error('Failed to fetch updated assessment');
+        return currentAssessment; // Return original if fetch fails
+      }
+    } catch (error) {
+      console.error('Failed to update assessment:', error);
+      return currentAssessment; // Return original if update fails
+    }
+  }, [currentAssessment]);
 
   const completeCooldown = useCallback((durationMs: number) => {
     if (currentAssessment) {
@@ -173,8 +193,9 @@ export function useEmotionGuard(userId = 'demo-user') {
   }, [currentAssessment, tradeOutcomeMutation]);
 
   const resetAssessment = useCallback(() => {
-    setCurrentAssessment(null);
-  }, []);
+    console.log('🔄 resetAssessment called - clearing currentAssessment');
+    debugSetCurrentAssessment(null);
+  }, [debugSetCurrentAssessment]);
 
   return {
     // State

@@ -17,9 +17,20 @@ export default function Dashboard() {
   const [selectedInstrument, setSelectedInstrument] = useState('EUR/USD');
   const [orderType, setOrderType] = useState<'market' | 'limit'>('market');
   
-  const { startAssessment, resetAssessment } = useEmotionGuard();
+  const { 
+    startAssessment, 
+    resetAssessment, 
+    currentAssessment, 
+    updateAssessment, 
+    completeCooldown, 
+    saveJournal, 
+    recordTradeOutcome,
+    submitOverride,
+    isAssessing
+  } = useEmotionGuard();
 
   const handleTradeClick = async (side: 'buy' | 'sell') => {
+    console.log('🔄 handleTradeClick called with side:', side);
     setOrderAction(side);
     
     const orderContext: OrderContext = {
@@ -34,12 +45,15 @@ export default function Dashboard() {
       marketVolatility: 0.6,
     };
 
+    console.log('🔄 Opening PreTradeGate modal');
     setShowPreTradeGate(true);
     
     try {
+      console.log('🔄 Calling startAssessment with:', orderContext);
       await startAssessment(orderContext);
+      console.log('✅ startAssessment completed successfully');
     } catch (error) {
-      console.error('Assessment failed:', error);
+      console.error('❌ Assessment failed:', error);
       setShowPreTradeGate(false);
     }
   };
@@ -262,6 +276,14 @@ export default function Dashboard() {
             orderType,
             side: orderAction,
           }}
+          currentAssessment={currentAssessment}
+          updateAssessment={updateAssessment}
+          completeCooldown={completeCooldown}
+          saveJournal={saveJournal}
+          recordTradeOutcome={recordTradeOutcome}
+          submitOverride={submitOverride}
+          isAssessing={isAssessing}
+          resetAssessment={resetAssessment}
         />
       )}
     </div>

@@ -8,7 +8,6 @@ import { RiskDisplay } from './RiskDisplay';
 import { MicroJournal } from './MicroJournal';
 import { BiometricTracker } from './BiometricTracker';
 import { FaceDetectionDisplay } from './FaceDetectionDisplay';
-import { useEmotionGuard } from '@/hooks/useEmotionGuard';
 import type { OrderContext, StroopTrial } from '@/types/emotionGuard';
 import type { FaceMetrics } from '@/lib/faceDetection';
 import { Slider } from '@/components/ui/slider';
@@ -19,6 +18,14 @@ interface PreTradeGateProps {
   onClose: () => void;
   orderAction: 'buy' | 'sell';
   orderContext: Partial<OrderContext>;
+  currentAssessment: any;
+  updateAssessment: any;
+  completeCooldown: any;
+  saveJournal: any;
+  recordTradeOutcome: any;
+  submitOverride: any;
+  isAssessing: boolean;
+  resetAssessment: any;
 }
 
 type AssessmentPhase = 
@@ -30,7 +37,19 @@ type AssessmentPhase =
   | 'microJournal' 
   | 'overrideJustification';
 
-export function PreTradeGate({ onClose, orderAction, orderContext }: PreTradeGateProps) {
+export function PreTradeGate({ 
+  onClose, 
+  orderAction, 
+  orderContext,
+  currentAssessment,
+  updateAssessment,
+  completeCooldown,
+  saveJournal,
+  recordTradeOutcome,
+  submitOverride,
+  isAssessing,
+  resetAssessment
+}: PreTradeGateProps) {
   const [currentPhase, setCurrentPhase] = useState<AssessmentPhase>('quickCheck');
   const [quickCheckProgress, setQuickCheckProgress] = useState(0);
   const [stroopResults, setStroopResults] = useState<StroopTrial[]>([]);
@@ -38,16 +57,7 @@ export function PreTradeGate({ onClose, orderAction, orderContext }: PreTradeGat
   const [overrideReason, setOverrideReason] = useState('');
   const [facialMetrics, setFacialMetrics] = useState<FaceMetrics | null>(null);
   
-  const {
-    currentAssessment,
-    updateAssessment,
-    completeCooldown,
-    saveJournal,
-    submitOverride,
-    recordTradeOutcome,
-    resetAssessment,
-    isAssessing,
-  } = useEmotionGuard();
+  // All emotion guard functionality now comes from props
 
   // Quick check simulation
   useEffect(() => {
@@ -81,18 +91,58 @@ export function PreTradeGate({ onClose, orderAction, orderContext }: PreTradeGat
   };
 
   const handleSelfReportComplete = async () => {
+    console.log('📝 handleSelfReportComplete called');
+    console.log('📝 currentAssessment exists:', !!currentAssessment);
+    console.log('📝 facialMetrics:', facialMetrics);
+    
+    // CRITICAL: Don't proceed until assessment is created and currentAssessment exists
+    if (!currentAssessment) {
+      console.log('⏳ Assessment not ready yet - waiting for assessment creation to complete...');
+      // Show a brief loading state and return early
+      return;
+    }
+    
     try {
-      // Update assessment with Stroop results, stress level, and facial metrics
-      await updateAssessment(stroopResults, stressLevel[0], facialMetrics);
+      // If we have facial metrics to add to the existing assessment, update them
+      if (facialMetrics) {
+        console.log('📝 Updating assessment with facial metrics');
+        await updateAssessment(stroopResults, stressLevel[0], facialMetrics);
+      } else {
+        console.log('📝 No facial metrics to update - proceeding to results');
+      }
+      
+      // Proceed to risk results only if we have a valid assessment
+      console.log('📝 Proceeding to risk results with assessment:', currentAssessment.assessmentId);
       setCurrentPhase('riskResults');
     } catch (error) {
       console.error('Assessment update failed:', error);
+      // Even if update fails, proceed to results if we have an assessment
+      console.log('📝 Update failed but assessment exists - proceeding to results anyway');
+      setCurrentPhase('riskResults');
     }
   };
 
   const handleFacialMetrics = (metrics: FaceMetrics) => {
     setFacialMetrics(metrics);
   };
+
+  // Auto-progress to results when assessment becomes available
+  useEffect(() => {
+    console.log('🔍 useEffect triggered: currentAssessment=', !!currentAssessment, ', currentPhase=', currentPhase);
+    if (currentAssessment && currentPhase === 'selfReport') {
+      console.log('🎯 Assessment completed while in selfReport phase - auto-progressing to results');
+      console.log('🎯 Assessment details:', currentAssessment.assessmentId, currentAssessment.verdict);
+      // Give a brief moment for user to finish their current action, then progress
+      setTimeout(() => {
+        setCurrentPhase('riskResults');
+      }, 500);
+    }
+  }, [currentAssessment, currentPhase]);
+
+  // Debug current assessment changes
+  useEffect(() => {
+    console.log('🔧 PreTradeGate: currentAssessment changed to:', currentAssessment ? currentAssessment.assessmentId : 'null');
+  }, [currentAssessment]);
 
   const handleProceedWithTrade = async () => {
     if (currentAssessment) {
