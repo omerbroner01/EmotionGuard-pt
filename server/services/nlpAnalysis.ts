@@ -124,7 +124,7 @@ Focus on identifying psychological patterns, emotional states, and risk factors 
       if (text.includes('tired') || text.includes('exhausted')) triggers.push('fatigue');
     }
     
-    return [...new Set(triggers)]; // Remove duplicates
+    return Array.from(new Set(triggers)); // Remove duplicates
   }
 
   private assessBasicRiskLevel(trigger: string, plan: string): 'low' | 'medium' | 'high' {
