@@ -1,0 +1,348 @@
+# EmotionGuard — Product Definition & Technical Specification
+
+## One-sentence definition
+
+EmotionGuard is a pre-trade **“stress CAPTCHA”**: a fast, privacy-preserving checkpoint that detects trader stress in real time and then **allows, delays, or blocks** the order—optionally guiding a short cooldown—so firms reduce impulsive, emotion-driven losses without disrupting normal flow.
+
+---
+
+## Problem & motivation
+
+* **Emotion-driven trading is expensive.** Stress spikes and “revenge trades” increase error rates, widen stops, and produce outsized losses that concentrate firm tail risk.
+* **Existing controls are post-hoc.** Journals, PnL circuit breakers, or after-action reviews trail the decision; they don’t intercept the **moment** of risk.
+* **Regulatory & reputational pressure.** Firms, brokerages, and platforms face growing expectations to implement **duty-of-care** and **harm-minimization** controls (esp. for retail/CFD/crypto).
+* **Operational reality.** Traders want speed, not friction. Any intervention must be **sub-2 seconds** (for a quick pass) and **rare**, yet effective when it matters.
+* **Measurable business need.** Reducing a small fraction of impulsive loss events materially improves desk PnL volatility, retention, and compliance posture.
+
+---
+
+## Target users & environments
+
+**User segments**
+
+* **Retail traders** using broker/exchange UIs (web & mobile).
+* **Prop firms** (futures/FX/crypto) seeking discipline & risk controls.
+* **Brokerages & exchanges** adding pre-trade wellness/compliance.
+* **Copy-trading & social platforms** protecting followers from cascades.
+
+**Environments & integration points**
+
+* **Desktop/Web:** Order ticket, hotkey trade, and one-click buy/sell → **pre-order hook** calls EmotionGuard SDK/API.
+* **Mobile:** Trade confirmation sheet → overlay check before submission.
+* **Programmatic (optional later):** Pre-trade API policy gate for approved client apps; not in MVP.
+
+---
+
+## Core concept (Stress CAPTCHA)
+
+EmotionGuard inserts a **time-bounded** checkpoint just before an order is sent:
+
+1. **Trigger:** Pre-order hook fires with context (instrument, size, leverage, PnL streak, time-of-day, volatility).
+2. **Assessment (policy-driven):**
+
+   * **QuickCheck** (≤1.5s): passive behavioral/keystroke signals + optional face presence; returns **Risk Score** + **Go/Hold/Block**.
+   * **InterferenceCheck** (6–10s): brief Stroop-like task + self-report slider; optional voice prosody; returns **Risk Score** + verdict.
+3. **Intervention:** If risk high, apply **graduated response**: warn → cooldown (guided breathing) → block with **override+reason**.
+4. **Audit:** Log signals, decision, explanation (no raw media by default), and trader’s optional note for later review.
+
+---
+
+## Full feature list (MVP → v1.5)
+
+### MVP (Month 1)
+
+* **Pre-trade gate overlay (SDK/modal):**
+
+  * Web SDK with `eg.init()` + `eg.checkBeforeTrade(orderContext)`; configurable strictness.
+  * Modal UX with timer & progress indicators.
+* **Multimodal assessment (policy-toggled):**
+
+  * **Reaction-time challenge** (Stroop-like; 6–10s).
+  * **Precision mouse/tap micro-latency** (jitter, hesitation) during order confirm.
+  * **Short self-report slider** (“How stressed right now?” 0–10).
+  * **Optional breath-guided cooldown** (30–60s) with visual pacing.
+  * **Optional webcam face-presence + blink proxy** (consent-gated; no identity).
+* **Personalized baselining (per user):**
+
+  * Rolling baselines for reaction time & micro-latency; context-aware (time-of-day; instrument class).
+* **Risk score & verdict:**
+
+  * Numeric **0–100** risk + **Go / Hold / Block**; show short reason tags (e.g., “Reaction slow + self-report high”).
+* **Journaling nudge:**
+
+  * If **Hold/Block** → 10–20s micro-journal (“What triggered this? Plan?”).
+* **Override policy:**
+
+  * Admin-tuned; requires justification; always logged.
+* **Admin console (firm-side):**
+
+  * Policies & thresholds; strictness presets; per-desk flags; audit log; CSV export.
+* **Analytics v1:**
+
+  * Gate trigger rate; pass/hold/block rate; override frequency; average cooldown minutes; per-desk metrics.
+* **Privacy controls (defaults):**
+
+  * No raw audio/video retained; ephemeral processing; redaction of free-text PII; region toggles.
+* **Internationalization & accessibility:**
+
+  * LTR/RTL, font scaling, keyboard-only path, screen-reader labels.
+
+### v1.0 (Post-MVP)
+
+* **Voice prosody check** (mic): arousal/stress score from short vowel phonation (“aaaah”) or 3–5 scripted words; on-device option.
+* **Experiment flags:** A/B variants of tasks/thresholds per desk.
+* **False-positive/negative tracker:** Review flagged incidents against realized outcomes (impulsive loss heuristic).
+* **Lift metrics:** Pre/post pilot comparisons (e.g., reduction in clustered loss events).
+* **Compliance modes:** “No-camera jurisdiction,” “No-audio,” “Local-only scoring.”
+
+### v1.5
+
+* **Fusion & personalization upgrades:** Context-aware ensemble with uncertainty; adaptive thresholds.
+* **Drift monitoring & auto-recalibration:** Per-user & population-level.
+* **NLP summaries for journals:** Compliance-ready notes.
+* **Desktop & Mobile SDKs:** Electron/.NET, Android/iOS.
+* **Data retention policies:** Granular windows per tenant; export APIs.
+
+---
+
+## AI/ML components (detailed)
+
+1. **Signal ingestion & normalization**
+
+   * Inputs: reaction time, accuracy, mouse/tap deltas, keystroke rhythm, blink presence, optional voice prosody, self-report, order context (leverage, size relative to median, recent PnL, instrument volatility, local time).
+   * Normalization: device class (mobile/desktop), network RTT, time-of-day, per-instrument baselines.
+
+2. **Voice emotion analysis (optional)**
+
+   * Features: pitch contour, jitter, shimmer, energy variance, formants; 1–2s sample.
+   * Output: **Arousal score (0–1)** with confidence; processed on-device where supported; never store raw audio by default.
+
+3. **Micro-expression classifier (optional webcam)**
+
+   * Task: detect stress cues (brow furrow rate, blink rate change, gaze fixation).
+   * **No identity**; no face templates persisted; compute ephemeral features only.
+
+4. **Cognitive challenge model**
+
+   * Stroop-like interference: latency & accuracy under color-word conflict; adaptive 3–6 trials.
+   * Output: **RT z-score vs. baseline** + error rate.
+
+5. **Behavioral biometrics**
+
+   * Micro-latency, jitter, backspace bursts, cursor path entropy during confirm; anomalies vs. personal baseline.
+
+6. **Fusion model**
+
+   * **Context-aware ensemble** (e.g., Bayesian or stacked logistic) combining modalities into **Risk Score (0–100)** + **uncertainty**.
+   * Inputs weighted by availability & policy; degrade gracefully.
+
+7. **Adaptive thresholding**
+
+   * Per user and context (instrument risk class, leverage); maintain target **false-positive rate** and **miss rate** bands.
+
+8. **NLP summarizer (journals)**
+
+   * Compress short free-text journal into 1–2 sentence, **compliance-friendly** note with tags (“revenge trade,” “FOMO,” “fatigue”).
+
+9. **Drift monitoring & auto-recalibration**
+
+   * Track baseline drift; trigger low-friction micro-checks outside trading hours; recalibrate thresholds automatically.
+
+---
+
+## Our “crazy patent”: Adaptive Multi-Modal Stress Gate (AMSG)
+
+**Claim (concept overview):**
+A method that **(a)** establishes a personal baseline using periodic, low-friction micro-checks; **(b)** applies a **time-bounded cognitive interference task** interleaved with **passive signals** (voice, micro-expression, behavioral jitter); **(c)** fuses all signals via a **context-aware Bayesian/ensemble model** calibrated to market conditions; **(d)** outputs a **verdict with confidence in <1.5s** for QuickCheck (and <10s for InterferenceCheck); and **(e)** enforces **graduated interventions** (warn → cooldown → block → supervised override) while **logging explanations** and preserving privacy (**no raw media persistence** by default).
+
+**Why novel / superior vs single-signal checks**
+
+* **Multi-modal robustness:** Combines cognitive impairment, autonomic cues, and interaction anomalies → higher AUC, fewer false blocks.
+* **Context-aware:** Thresholds adapt to user, instrument, leverage, and volatility regime.
+* **Latency-tiered:** Dual-mode design (QuickCheck/InterferenceCheck) keeps most trades frictionless while catching high-risk spikes.
+* **Privacy-first:** Ephemeral media features + explainable summaries—deployable in stricter jurisdictions.
+* **Operationally practical:** Fits in existing pre-order flows with deterministic budgets and auditable logs.
+
+---
+
+## User flows (step-by-step)
+
+### 1) First-run onboarding & baseline creation
+
+1. Trader sees brief **intro & consent**; selects allowed modalities (voice/cam optional).
+2. Run **baseline pack**: 2× reaction mini-tasks (30–45s total), background micro-latency sample, optional face-presence calibration, optional 1s voice vowel.
+3. Store baselines (no raw media) + consent record.
+4. Success toast: “Pre-trade checks will be fast; you can change privacy at any time.”
+
+### 2) Normal pre-trade gate (happy path)
+
+1. Order ticket → **pre-order hook** calls `eg.checkBeforeTrade`.
+2. **QuickCheck** executes (≤1.5s): behavioral + optional face-presence; fuse with context; **Risk Score** computed.
+3. Verdict **Go** → submit proceeds; event logged (score, reason tags, policy version).
+4. Optional post-trade micro-check prompt if volume high or sequence suggests fatigue (policy flag).
+
+### 3) High-stress detected → cooldown & journaling
+
+1. Verdict **Hold/Block** → modal explains brief reason (“RT high + self-report 8/10”).
+2. Offer **30–60s breath-guided cooldown**; timer visible; cancelable with **override+reason** (if policy allows).
+3. Prompt **micro-journal**: emotion + plan (“Reduce size to X; wait for setup”).
+4. After cooldown, re-check: **Go** or keep **Hold**; if override used, log **supervisor alert** (optional).
+
+### 4) Admin policy update → live config propagation
+
+1. Admin adjusts strictness preset (per desk/instrument class) in console.
+2. Config change generates **signed policy version** and pushes to SDK via config CDN/polling (≤1 min).
+3. Next checks use new thresholds with version recorded in each event.
+
+### 5) Incident review in Admin console
+
+1. Risk manager filters events by **Block** or **override**.
+2. Opens incident: sees context, reasons, journal summary, and subsequent outcomes (PnL, MFE/MAE).
+3. Marks as **TP/FP** and optionally tunes policy (A/B flag) for upcoming sessions.
+4. Export CSV/PDF for audit.
+
+---
+
+## Policies & configuration
+
+* **Strictness levels:** *Lenient / Standard / Strict / Custom.*
+* **Per-instrument sensitivity:** Futures/FX/crypto high-risk presets; leverage-scaled.
+* **Cooldown durations:** 15–120s; configurable by desk.
+* **Override rules:** Allowed? Who can override? Require reason? Supervisor notification?
+* **Assessment mode:** QuickCheck only, InterferenceCheck if risk>θ, or always InterferenceCheck above leverage L.
+* **Data retention windows:** 7 / 30 / 90 days for event metadata; journals redacted after N days.
+* **Privacy toggles:** No-camera, no-audio, local-only features, strict data-minimization.
+* **Compliance modes:** Jurisdiction presets (e.g., “EU retail – camera off”).
+* **Experiment flags:** Enable specific tasks/variants at % rollout.
+
+---
+
+## Non-functional requirements
+
+* **Latency budgets**
+
+  * **QuickCheck p95 ≤ 1.5s** end-to-end (SDK call → verdict).
+  * **InterferenceCheck 6–10s** including UI task; API processing ≤300ms.
+  * Network RTT compensation & local fallback if API >300ms.
+* **Uptime targets:** 99.5% monthly for scoring API; read-only dashboards may degrade gracefully.
+* **Security posture**
+
+  * TLS 1.2+; at-rest encryption (AES-256).
+  * **No raw media storage by default**; ephemeral RAM features only.
+  * Role-based access; per-tenant API keys; signed policy versions; tamper-evident audit log (hash chain).
+* **Auditability:** Exportable CSV/PDF; event schema versioned; policies & thresholds versioned.
+* **Scalability:** 100 RPS/tenant baseline; burst to 500 RPS; horizontal autoscale.
+* **Accessibility:** WCAG 2.1 AA; keyboard-only; screen reader labels; color-blind safe palettes.
+
+---
+
+## Privacy & ethics
+
+* **Data minimization:** Collect only features needed; aggregate where possible; redact free-text journals (PII detector).
+* **Opt-in modalities:** Camera/mic always optional; function without them.
+* **On-device inference options:** Voice prosody & face-presence can run locally; only features/score sent server-side.
+* **Explicit consent UX:** Clear micro-copy; ability to change at any time; explain outputs & overrides.
+* **Explainability:** Show reason tags (e.g., “reaction slow vs your baseline”).
+* **Bias checks:** Monitor FP rates across device classes/time zones; instrument-specific thresholds to avoid penalizing e.g., high-volatility scalpers.
+* **Regional compliance:** Mode presets (no camera/audio); data residency options; retention windows per region.
+
+---
+
+## Integration model
+
+**SDKs (initial: Web)**
+
+* **Initialize:** `eg.init({ tenantKey, policyUrl, region, features })`
+* **Check:** `eg.checkBeforeTrade(orderContext)` → `{ riskScore, verdict, reasons, policyVersion }`
+* **Events:** `eg.on('decision', handler)`; `eg.on('error', handler)`
+
+**API hooks (outline)**
+
+* `POST /v1/score` — inputs: userId, deviceClass, orderContext, availableSignals; returns score, verdict, reasons, uncertainty, policyVersion.
+* `POST /v1/events` — log overrides, journals, cooldown completions.
+* `GET /v1/policy` — current signed policy & experiment flags.
+
+**Webhooks (tenant-side)**
+
+* `decision.created` (verdict + reasons)
+* `override.used` (user, reason, score)
+* `policy.updated` (version, checksum)
+
+**Sample integration points (outline only)**
+
+* **Pre-order**: call `checkBeforeTrade` just before `placeOrder()`.
+* **Post-order** (optional): attach decision id for downstream analytics.
+* **Admin SSO** (later): OIDC to console.
+
+---
+
+## KPIs & success metrics
+
+**Build/velocity**
+
+* Week-1 live URL; p95 QuickCheck ≤1.5s; CI green ≥90%; median PR cycle time <24h.
+
+**Product effectiveness**
+
+* **Reduction in impulsive-loss events** (heuristic): ≥15% in pilots.
+* **False-positive rate:** ≤5% of checks result in unnecessary Hold/Block (validated by incident reviews).
+* **Override rate:** <30% of Blocks overridden; downward trend over time.
+* **User experience:** ≥80% traders rate friction “acceptable” or better.
+
+**Adoption/GTM**
+
+* **Activation:** ≥70% desks with SDK installed in sandbox.
+* **Engagement:** ≥30 checks/trader/week in active desks.
+* **Commercial:** ≥2 pilots started, ≥1 paid POC within 60 days, pilot → paid conversion ≥40%.
+
+---
+
+## Roadmap (MVP → v1 → v1.5)
+
+**MVP (Month 1 — current sprint)**
+
+* Web SDK + modal; QuickCheck + InterferenceCheck (reaction task + self-report).
+* Behavioral micro-latency features; optional face-presence/blink proxy.
+* Rule-based scorer + simple ensemble; per-user baselines; admin console v1; analytics v1; CSV export.
+* Privacy defaults (no media storage), consent UX, retention windows.
+* Signed policies & audit log (hash chain).
+  **Risks:** UI friction; FP rate; camera permissions.
+  **Mitigations:** Strict mode off by default; degrade to QuickCheck; explicit consent.
+
+**v1.0 (Month 2–3)**
+
+* Voice prosody (on-device first), experiment flags, FP/FN tracker with outcomes, compliance modes.
+* Adaptive thresholds per instrument; A/B testing at desk level.
+* NLP journal summarizer; richer dashboard.
+
+**v1.5 (Month 4–6)**
+
+* Fusion model with uncertainty, drift monitoring & auto-recalibration.
+* Desktop/Mobile SDKs, data residency options, admin SSO, role-based exports.
+* Extended analytics: cohort lift, override-to-loss correlation.
+
+---
+
+## Glossary
+
+* **Stress CAPTCHA:** Short, structured test (active + passive signals) before trade submission to assess stress and self-control readiness.
+* **QuickCheck:** Sub-1.5s assessment using passive & lightweight signals; minimal friction.
+* **InterferenceCheck:** 6–10s cognitive task (e.g., Stroop) plus self-report; higher sensitivity.
+* **Risk Score (0–100):** Composite measure from multi-modal features; higher = riskier.
+* **Go / Hold / Block:** Decision classes—proceed, delay/cooldown, or prevent unless overridden.
+* **Override:** Trader or supervisor bypass of Block with required justification; always logged.
+* **Baseline:** Personal “normal” for reaction/behavioral metrics; updated continuously.
+* **Reason tags:** Human-readable explanation factors (e.g., “RT z>2,” “self-report 8/10”).
+* **Experiment flag:** Toggle enabling different tasks/thresholds for A/B evaluation.
+* **Compliance mode:** Predefined privacy/feature profile aligned to jurisdictional constraints.
+* **AMSG:** Adaptive Multi-Modal Stress Gate—the patented core method (baseline → signals → fusion → verdict → graduated interventions).
+
+---
+
+### Acceptance summary for MVP (what “done” means in one month)
+
+* Web SDK integrated in demo app; **p95 QuickCheck ≤1.5s**; **InterferenceCheck 6–10s**.
+* Per-user baselines functioning; **Go/Hold/Block** with reason tags; **override+reason**.
+* Admin console with policies, strictness presets, CSV export; signed policy versioning.
+* Privacy defaults enforced: no raw media storage; consent UX shipped.
+* Analytics v1 live; incident review workflow usable; two sandbox pilots installable.
