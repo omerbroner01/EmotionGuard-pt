@@ -79,6 +79,14 @@ export class EmotionGuardService {
     orderContext: OrderContext,
     signals: AssessmentSignals
   ): Promise<AssessmentResult> {
+    console.log('[DEBUG] EmotionGuard.checkBeforeTrade called with signals:', {
+      hasStressLevel: !!signals.stressLevel,
+      hasFacialMetrics: !!signals.facialMetrics,
+      facialMetrics: signals.facialMetrics,
+      hasFacialExpressionFeatures: !!signals.facialExpressionFeatures,
+      hasStroopTrials: !!signals.stroopTrials
+    });
+
     // Get user baseline and policy
     const [baseline, policy] = await Promise.all([
       storage.getUserBaseline(userId),
@@ -100,8 +108,10 @@ export class EmotionGuardService {
       },
       voiceProsodyScore: signals.voiceProsodyFeatures ? 
         this.calculateVoiceProsodyScore(signals.voiceProsodyFeatures) : null,
-      facialExpressionScore: signals.facialExpressionFeatures ?
-        this.calculateFacialExpressionScore(signals.facialExpressionFeatures) : null,
+      facialExpressionScore: signals.facialMetrics ?
+        this.calculateFacialExpressionScoreFromMetrics(signals.facialMetrics) : 
+        signals.facialExpressionFeatures ?
+          this.calculateFacialExpressionScore(signals.facialExpressionFeatures) : null,
       riskScore: 0, // Will be calculated
       verdict: 'go', // Will be determined
       reasonTags: [],
@@ -127,30 +137,30 @@ export class EmotionGuardService {
       confidence: riskResult.confidence,
     });
 
-    // Log audit event
-    await storage.createAuditLog({
-      userId,
-      assessmentId: assessment.id,
-      action: 'assessment_completed',
-      details: {
-        riskScore: riskResult.riskScore,
-        verdict,
-        reasonTags,
-        orderContext,
-      },
-    });
-
-    // Create real-time event
-    await storage.createEvent({
-      eventType: 'verdict_rendered',
-      userId,
-      assessmentId: assessment.id,
-      data: {
-        verdict,
-        riskScore: riskResult.riskScore,
-        reasonTags,
-      },
-    });
+    // Log audit event and create real-time event in parallel
+    await Promise.all([
+      storage.createAuditLog({
+        userId,
+        assessmentId: assessment.id,
+        action: 'assessment_completed',
+        details: {
+          riskScore: riskResult.riskScore,
+          verdict,
+          reasonTags,
+          orderContext,
+        },
+      }),
+      storage.createEvent({
+        eventType: 'verdict_rendered',
+        userId,
+        assessmentId: assessment.id,
+        data: {
+          verdict,
+          riskScore: riskResult.riskScore,
+          reasonTags,
+        },
+      })
+    ]);
 
     return {
       assessmentId: assessment.id,
@@ -279,6 +289,35 @@ export class EmotionGuardService {
       features.browFurrow > 0.5 ? 0.4 : 0, // Furrowed brow
       features.blinkRate > 20 ? 0.3 : 0, // Increased blink rate
       features.gazeFixation < 0.3 ? 0.3 : 0, // Lack of focus
+    ];
+    
+    return Math.min(1.0, stressIndicators.reduce((sum, score) => sum + score, 0));
+  }
+
+  private calculateFacialExpressionScoreFromMetrics(metrics: AssessmentSignals['facialMetrics']): number {
+    console.log('[DEBUG] calculateFacialExpressionScoreFromMetrics called with:', metrics);
+    
+    if (!metrics || !metrics.isPresent) {
+      console.log('[DEBUG] No metrics or face not present, returning 0');
+      return 0;
+    }
+    
+    // Real MediaPipe-based facial stress indicators
+    const stressIndicators = [
+      // Abnormal blink rate (normal: 12-20 per minute)
+      metrics.blinkRate < 8 || metrics.blinkRate > 25 ? 0.3 : 0,
+      
+      // High brow furrow indicates stress/concentration
+      metrics.browFurrow > 0.6 ? 0.35 : metrics.browFurrow > 0.3 ? 0.15 : 0,
+      
+      // Low gaze stability indicates distraction/anxiety
+      metrics.gazeStability < 0.5 ? 0.25 : metrics.gazeStability < 0.7 ? 0.1 : 0,
+      
+      // Very low eye aspect ratio indicates fatigue/stress
+      metrics.eyeAspectRatio < 0.02 ? 0.2 : 0,
+      
+      // Jaw tension (abnormal openness patterns)
+      metrics.jawOpenness > 0.7 ? 0.1 : 0,
     ];
     
     return Math.min(1.0, stressIndicators.reduce((sum, score) => sum + score, 0));

@@ -105,7 +105,7 @@ export function FaceDetectionDisplay({ onMetricsUpdate, autoStart = false }: Fac
             variant={isActive ? "destructive" : "default"}
             size="sm"
             onClick={handleToggleDetection}
-            disabled={!isInitialized && !error}
+            disabled={false}
             data-testid="button-toggle-face-detection"
           >
             {isActive ? (

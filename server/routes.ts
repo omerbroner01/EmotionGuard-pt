@@ -42,6 +42,14 @@ const checkTradeSchema = z.object({
       blinkRate: z.number(),
       gazeFixation: z.number(),
     }).optional(),
+    facialMetrics: z.object({
+      isPresent: z.boolean(),
+      blinkRate: z.number(),
+      eyeAspectRatio: z.number(),
+      jawOpenness: z.number(),
+      browFurrow: z.number(),
+      gazeStability: z.number(),
+    }).optional(),
   }),
 });
 
@@ -352,6 +360,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.error('Assessments retrieval failed:', error);
       res.status(500).json({ 
         message: 'Assessments retrieval failed' 
+      });
+    }
+  });
+
+  // Get specific assessment details
+  app.get('/api/emotion-guard/assessments/:id', async (req, res) => {
+    try {
+      const assessmentId = req.params.id;
+      const assessment = await storage.getAssessment(assessmentId);
+      
+      if (!assessment) {
+        return res.status(404).json({ message: 'Assessment not found' });
+      }
+      
+      res.json(assessment);
+    } catch (error) {
+      console.error('Assessment retrieval failed:', error);
+      res.status(500).json({ 
+        message: 'Assessment retrieval failed' 
       });
     }
   });

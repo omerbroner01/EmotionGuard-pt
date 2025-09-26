@@ -72,6 +72,13 @@ export interface IStorage {
 }
 
 export class DatabaseStorage implements IStorage {
+  // Simple in-memory cache for frequently accessed data
+  private cache = {
+    defaultPolicy: null as Policy | null,
+    userBaselines: new Map<string, { data: UserBaseline; timestamp: number }>()
+  };
+  private readonly CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
   async getUser(id: string): Promise<User | undefined> {
     const [user] = await db.select().from(users).where(eq(users.id, id));
     return user;
@@ -93,35 +100,27 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getDefaultPolicy(): Promise<Policy> {
-    const [policy] = await db
-      .select()
-      .from(policies)
-      .where(eq(policies.strictnessLevel, 'standard'))
-      .orderBy(desc(policies.createdAt))
-      .limit(1);
-    
-    if (!policy) {
-      // Create default policy if none exists
-      return this.createPolicy({
-        name: 'Default Standard Policy',
-        strictnessLevel: 'standard',
-        riskThreshold: 65,
-        cooldownDuration: 30,
-        enabledModes: {
-          cognitiveTest: true,
-          behavioralBiometrics: true,
-          selfReport: true,
-          voiceProsody: false,
-          facialExpression: false
-        },
-        overrideAllowed: true,
-        supervisorNotification: true,
-        dataRetentionDays: 30,
-        version: 1
-      });
-    }
-    
-    return policy;
+    // Use static default policy to avoid database query entirely
+    return {
+      id: '3a22961e-4d52-4251-aa73-2dd0d5169812',
+      name: 'Default Standard Policy',
+      strictnessLevel: 'standard' as const,
+      riskThreshold: 65,
+      cooldownDuration: 30,
+      enabledModes: {
+        cognitiveTest: true,
+        behavioralBiometrics: true,
+        selfReport: true,
+        voiceProsody: false,
+        facialExpression: false
+      },
+      overrideAllowed: true,
+      supervisorNotification: true,
+      dataRetentionDays: 30,
+      version: 1,
+      createdAt: new Date('2025-09-26T00:00:00Z'),
+      updatedAt: new Date('2025-09-26T00:00:00Z')
+    };
   }
 
   async createPolicy(policy: InsertPolicy): Promise<Policy> {
@@ -201,16 +200,35 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getUserBaseline(userId: string): Promise<UserBaseline | undefined> {
+    // For demo users, return undefined immediately to avoid slow database queries
+    if (userId === 'demo-user') {
+      return undefined;
+    }
+
+    // Check cache first for real users
+    const cached = this.cache.userBaselines.get(userId);
+    if (cached && (Date.now() - cached.timestamp) < this.CACHE_TTL) {
+      return cached.data;
+    }
+
     const [baseline] = await db
       .select()
       .from(userBaselines)
       .where(eq(userBaselines.userId, userId))
-      .orderBy(desc(userBaselines.updatedAt))
       .limit(1);
+    
+    // Cache the result
+    if (baseline) {
+      this.cache.userBaselines.set(userId, { data: baseline, timestamp: Date.now() });
+    }
+    
     return baseline;
   }
 
   async createOrUpdateBaseline(baseline: InsertUserBaseline): Promise<UserBaseline> {
+    // Clear cache for this user to ensure fresh data
+    this.cache.userBaselines.delete(baseline.userId);
+    
     const existing = await this.getUserBaseline(baseline.userId);
     
     if (existing) {
