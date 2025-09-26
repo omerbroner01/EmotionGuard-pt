@@ -138,7 +138,7 @@ export function AdminAnalytics({ stats, recentEvents, isLoading, lastMessage }: 
               <div className="bg-muted rounded-lg p-3">
                 <div className="text-xs text-muted-foreground">Avg Risk Score</div>
                 <div className="text-lg font-semibold" data-testid="metric-avgrisk">
-                  {stats?.averageRiskScore?.toFixed(1) || '45.2'}
+                  {stats?.averageRiskScore ? Number(stats.averageRiskScore).toFixed(1) : '45.2'}
                 </div>
                 <div className="text-xs text-muted-foreground">Within normal range</div>
               </div>
