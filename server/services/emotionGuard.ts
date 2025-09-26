@@ -1,0 +1,312 @@
+import { storage } from "../storage";
+import { RiskScoringService } from "./riskScoring";
+import type { Assessment, InsertAssessment, Policy, UserBaseline } from "@shared/schema";
+
+export interface OrderContext {
+  instrument: string;
+  size: number;
+  orderType: 'market' | 'limit';
+  side: 'buy' | 'sell';
+  leverage?: number;
+  currentPnL?: number;
+  recentLosses?: number;
+  timeOfDay: string;
+  marketVolatility?: number;
+}
+
+export interface AssessmentSignals {
+  // Quick check signals
+  mouseMovements?: number[];
+  keystrokeTimings?: number[];
+  clickLatency?: number;
+  
+  // Stroop test results
+  stroopTrials?: Array<{
+    word: string;
+    color: string;
+    response: string;
+    reactionTimeMs: number;
+    correct: boolean;
+  }>;
+  
+  // Self-report
+  stressLevel?: number; // 0-10
+  
+  // Optional biometrics
+  voiceProsodyFeatures?: {
+    pitch: number;
+    jitter: number;
+    shimmer: number;
+    energy: number;
+  };
+  
+  facialExpressionFeatures?: {
+    browFurrow: number;
+    blinkRate: number;
+    gazeFixation: number;
+  };
+}
+
+export interface AssessmentResult {
+  assessmentId: string;
+  riskScore: number; // 0-100
+  verdict: 'go' | 'hold' | 'block';
+  reasonTags: string[];
+  confidence: number;
+  recommendedAction: string;
+  cooldownDuration?: number;
+}
+
+export class EmotionGuardService {
+  private riskScoring: RiskScoringService;
+
+  constructor() {
+    this.riskScoring = new RiskScoringService();
+  }
+
+  async checkBeforeTrade(
+    userId: string,
+    orderContext: OrderContext,
+    signals: AssessmentSignals
+  ): Promise<AssessmentResult> {
+    // Get user baseline and policy
+    const [baseline, policy] = await Promise.all([
+      storage.getUserBaseline(userId),
+      storage.getDefaultPolicy() // In production, this would be user/desk-specific
+    ]);
+
+    // Create assessment record
+    const assessment = await storage.createAssessment({
+      userId,
+      policyId: policy.id,
+      orderContext,
+      quickCheckDurationMs: this.calculateQuickCheckDuration(signals),
+      stroopTestResults: signals.stroopTrials || null,
+      selfReportStress: signals.stressLevel || null,
+      behavioralMetrics: {
+        mouseMovements: signals.mouseMovements || [],
+        keystrokeTimings: signals.keystrokeTimings || [],
+        clickLatency: signals.clickLatency || null,
+      },
+      voiceProsodyScore: signals.voiceProsodyFeatures ? 
+        this.calculateVoiceProsodyScore(signals.voiceProsodyFeatures) : null,
+      facialExpressionScore: signals.facialExpressionFeatures ?
+        this.calculateFacialExpressionScore(signals.facialExpressionFeatures) : null,
+      riskScore: 0, // Will be calculated
+      verdict: 'go', // Will be determined
+      reasonTags: [],
+    });
+
+    // Calculate risk score
+    const riskResult = await this.riskScoring.calculateRiskScore(
+      signals,
+      baseline,
+      orderContext,
+      policy
+    );
+
+    // Determine verdict based on risk score and policy
+    const verdict = this.determineVerdict(riskResult.riskScore, policy);
+    const reasonTags = this.generateReasonTags(riskResult, signals, baseline);
+
+    // Update assessment with results
+    const updatedAssessment = await storage.updateAssessment(assessment.id, {
+      riskScore: riskResult.riskScore,
+      verdict,
+      reasonTags,
+      confidence: riskResult.confidence,
+    });
+
+    // Log audit event
+    await storage.createAuditLog({
+      userId,
+      assessmentId: assessment.id,
+      action: 'assessment_completed',
+      details: {
+        riskScore: riskResult.riskScore,
+        verdict,
+        reasonTags,
+        orderContext,
+      },
+    });
+
+    // Create real-time event
+    await storage.createEvent({
+      eventType: 'verdict_rendered',
+      userId,
+      assessmentId: assessment.id,
+      data: {
+        verdict,
+        riskScore: riskResult.riskScore,
+        reasonTags,
+      },
+    });
+
+    return {
+      assessmentId: assessment.id,
+      riskScore: riskResult.riskScore,
+      verdict,
+      reasonTags,
+      confidence: riskResult.confidence,
+      recommendedAction: this.getRecommendedAction(verdict, riskResult.riskScore),
+      cooldownDuration: verdict === 'hold' ? policy.cooldownDuration : undefined,
+    };
+  }
+
+  async recordCooldownCompletion(
+    assessmentId: string,
+    durationMs: number
+  ): Promise<void> {
+    await storage.updateAssessment(assessmentId, {
+      cooldownCompleted: true,
+      cooldownDurationMs: durationMs,
+    });
+
+    await storage.createAuditLog({
+      assessmentId,
+      action: 'cooldown_completed',
+      details: { durationMs },
+    });
+  }
+
+  async recordJournalEntry(
+    assessmentId: string,
+    trigger: string,
+    plan: string,
+    entry?: string
+  ): Promise<void> {
+    await storage.updateAssessment(assessmentId, {
+      journalTrigger: trigger,
+      journalPlan: plan,
+      journalEntry: entry,
+    });
+
+    await storage.createAuditLog({
+      assessmentId,
+      action: 'journal_entry_saved',
+      details: { trigger, plan, entry },
+    });
+  }
+
+  async recordOverride(
+    assessmentId: string,
+    reason: string,
+    userId: string
+  ): Promise<void> {
+    const assessment = await storage.getAssessment(assessmentId);
+    if (!assessment) throw new Error('Assessment not found');
+
+    await storage.updateAssessment(assessmentId, {
+      overrideUsed: true,
+      overrideReason: reason,
+      supervisorNotified: true,
+    });
+
+    await storage.createAuditLog({
+      userId,
+      assessmentId,
+      action: 'override_used',
+      details: { reason, originalVerdict: assessment.verdict },
+    });
+
+    await storage.createEvent({
+      eventType: 'override_used',
+      userId,
+      assessmentId,
+      data: {
+        reason,
+        originalVerdict: assessment.verdict,
+        riskScore: assessment.riskScore,
+      },
+    });
+  }
+
+  async recordTradeOutcome(
+    assessmentId: string,
+    outcome: {
+      executed: boolean;
+      pnl?: number;
+      duration?: number;
+      maxFavorableExcursion?: number;
+      maxAdverseExcursion?: number;
+    }
+  ): Promise<void> {
+    await storage.updateAssessment(assessmentId, {
+      tradeExecuted: outcome.executed,
+      tradeOutcome: outcome,
+    });
+  }
+
+  private calculateQuickCheckDuration(signals: AssessmentSignals): number {
+    // Simple heuristic - in production this would be more sophisticated
+    const baseTime = 1000; // 1 second base
+    const mouseDelay = signals.mouseMovements ? signals.mouseMovements.length * 10 : 0;
+    const keystrokeDelay = signals.keystrokeTimings ? 
+      signals.keystrokeTimings.reduce((sum, time) => sum + time, 0) : 0;
+    
+    return baseTime + mouseDelay + keystrokeDelay;
+  }
+
+  private calculateVoiceProsodyScore(features: AssessmentSignals['voiceProsodyFeatures']): number {
+    if (!features) return 0;
+    
+    // Simplified scoring - in production this would use ML models
+    const stressIndicators = [
+      features.pitch > 200 ? 0.3 : 0, // Higher pitch indicates stress
+      features.jitter > 0.01 ? 0.25 : 0, // Voice instability
+      features.shimmer > 0.05 ? 0.25 : 0, // Amplitude variation
+      features.energy < 0.5 ? 0.2 : 0, // Low energy can indicate fatigue
+    ];
+    
+    return Math.min(1.0, stressIndicators.reduce((sum, score) => sum + score, 0));
+  }
+
+  private calculateFacialExpressionScore(features: AssessmentSignals['facialExpressionFeatures']): number {
+    if (!features) return 0;
+    
+    // Simplified scoring - in production this would use computer vision models
+    const stressIndicators = [
+      features.browFurrow > 0.5 ? 0.4 : 0, // Furrowed brow
+      features.blinkRate > 20 ? 0.3 : 0, // Increased blink rate
+      features.gazeFixation < 0.3 ? 0.3 : 0, // Lack of focus
+    ];
+    
+    return Math.min(1.0, stressIndicators.reduce((sum, score) => sum + score, 0));
+  }
+
+  private determineVerdict(riskScore: number, policy: Policy): 'go' | 'hold' | 'block' {
+    if (riskScore >= 80) return 'block';
+    if (riskScore >= policy.riskThreshold) return 'hold';
+    return 'go';
+  }
+
+  private generateReasonTags(
+    riskResult: any,
+    signals: AssessmentSignals,
+    baseline?: UserBaseline
+  ): string[] {
+    const tags: string[] = [];
+    
+    if (riskResult.reactionTimeElevated) tags.push('Reaction time elevated');
+    if (riskResult.accuracyLow) tags.push('Accuracy below baseline');
+    if (signals.stressLevel && signals.stressLevel >= 7) tags.push('Self-report high stress');
+    if (riskResult.behavioralAnomalies) tags.push('Behavioral anomalies detected');
+    if (riskResult.voiceStressDetected) tags.push('Voice stress indicators');
+    if (riskResult.facialStressDetected) tags.push('Facial stress indicators');
+    
+    return tags;
+  }
+
+  private getRecommendedAction(verdict: 'go' | 'hold' | 'block', riskScore: number): string {
+    switch (verdict) {
+      case 'go':
+        return 'Proceed with trade - stress levels appear normal';
+      case 'hold':
+        return 'Consider taking a breathing break before proceeding';
+      case 'block':
+        return 'High stress detected - recommend postponing trade and reflecting on triggers';
+      default:
+        return 'Assessment completed';
+    }
+  }
+}
