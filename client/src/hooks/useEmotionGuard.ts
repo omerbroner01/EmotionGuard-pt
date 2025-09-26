@@ -110,6 +110,25 @@ export function useEmotionGuard(userId = 'demo-user') {
         });
         // Ensure the updated assessment is set
         setCurrentAssessment(result);
+        
+        // If we have facial metrics, also update the assessment with them via the dedicated endpoint
+        if (facialMetrics && result.assessmentId) {
+          try {
+            await fetch(`/api/emotion-guard/assessments/${result.assessmentId}/facial-metrics`, {
+              method: 'PUT',
+              headers: {
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                facialMetrics,
+              }),
+            });
+            console.log('✓ Facial metrics successfully updated in assessment');
+          } catch (error) {
+            console.error('Failed to update facial metrics:', error);
+          }
+        }
+        
         return result;
       }
     }

@@ -200,6 +200,48 @@ export class EmotionGuardService {
     });
   }
 
+  async updateAssessmentFacialMetrics(
+    assessmentId: string,
+    facialMetrics: {
+      isPresent: boolean;
+      blinkRate: number;
+      eyeAspectRatio: number;
+      jawOpenness: number;
+      browFurrow: number;
+      gazeStability: number;
+    }
+  ): Promise<void> {
+    console.log('🔍 updateAssessmentFacialMetrics received:', {
+      assessmentId,
+      facialMetrics
+    });
+
+    // Calculate facial expression score from the metrics
+    const facialExpressionScore = this.calculateFacialExpressionScoreFromMetrics(facialMetrics);
+    
+    console.log('🧮 Calculated facialExpressionScore:', facialExpressionScore);
+
+    await storage.updateAssessment(assessmentId, {
+      facialMetrics,
+      facialExpressionScore,
+    });
+
+    console.log('✓ Assessment updated with facial metrics and score');
+
+    // Create audit log safely - don't fail the entire operation if audit log fails
+    try {
+      await storage.createAuditLog({
+        assessmentId,
+        action: 'facial_metrics_updated',
+        details: { facialMetrics, facialExpressionScore },
+      });
+      console.log('✓ Audit log created successfully');
+    } catch (auditError) {
+      console.error('⚠️ Audit log creation failed (non-critical):', auditError);
+      // Continue - facial metrics update was successful
+    }
+  }
+
   async recordOverride(
     assessmentId: string,
     reason: string,

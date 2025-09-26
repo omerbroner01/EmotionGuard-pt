@@ -364,6 +364,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Update assessment with facial metrics
+  app.put('/api/emotion-guard/assessments/:id/facial-metrics', async (req, res) => {
+    try {
+      const assessmentId = req.params.id;
+      const { facialMetrics } = req.body;
+      
+      await emotionGuard.updateAssessmentFacialMetrics(assessmentId, facialMetrics);
+      
+      res.json({ success: true });
+    } catch (error) {
+      console.error('Facial metrics update failed:', error);
+      res.status(400).json({ 
+        message: error instanceof Error ? error.message : 'Facial metrics update failed' 
+      });
+    }
+  });
+
   // Get specific assessment details
   app.get('/api/emotion-guard/assessments/:id', async (req, res) => {
     try {
