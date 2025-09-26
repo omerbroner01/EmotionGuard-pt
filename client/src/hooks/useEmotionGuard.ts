@@ -148,8 +148,18 @@ export function useEmotionGuard(userId = 'demo-user') {
       const response = await fetch(`/api/emotion-guard/assessments/${currentAssessment.assessmentId}`);
       if (response.ok) {
         const updatedAssessment = await response.json();
-        debugSetCurrentAssessment(updatedAssessment);
-        return updatedAssessment;
+        // Transform the database assessment object to match AssessmentResult interface
+        const transformedAssessment = {
+          assessmentId: updatedAssessment.id,
+          riskScore: updatedAssessment.riskScore,
+          verdict: updatedAssessment.verdict,
+          reasonTags: updatedAssessment.reasonTags || [],
+          confidence: updatedAssessment.confidence || 0,
+          recommendedAction: currentAssessment.recommendedAction || 'Continue with assessment',
+          cooldownDuration: updatedAssessment.cooldownDurationMs,
+        };
+        debugSetCurrentAssessment(transformedAssessment);
+        return transformedAssessment;
       } else {
         console.error('Failed to fetch updated assessment');
         return currentAssessment; // Return original if fetch fails

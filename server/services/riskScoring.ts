@@ -422,22 +422,22 @@ export class RiskScoringService {
       contextRisk += 10; // High leverage
     }
 
-    // Recent losses are a major risk factor
+    // Recent losses are a major risk factor (recentLosses is a count of losing trades)
     if (orderContext.recentLosses) {
-      if (orderContext.recentLosses < -10000) {
-        contextRisk += 25; // Very large recent losses
-      } else if (orderContext.recentLosses < -5000) {
-        contextRisk += 15; // Large recent losses 
-      } else if (orderContext.recentLosses < -1000) {
-        contextRisk += 8; // Moderate recent losses
+      if (orderContext.recentLosses >= 5) {
+        contextRisk += 25; // Many recent losing trades
+      } else if (orderContext.recentLosses >= 3) {
+        contextRisk += 15; // Several recent losing trades
+      } else if (orderContext.recentLosses >= 1) {
+        contextRisk += 8; // Some recent losing trades
       }
     }
 
-    // Significant negative P&L increases risk (adjust threshold to be more reasonable)
-    if (orderContext.currentPnL && orderContext.currentPnL < -5000) {
+    // Significant negative P&L increases risk (more realistic thresholds)
+    if (orderContext.currentPnL && orderContext.currentPnL < -2000) {
       contextRisk += 15; // Very large losses
-    } else if (orderContext.currentPnL && orderContext.currentPnL < -2500) {
-      contextRisk += 8; // Large losses
+    } else if (orderContext.currentPnL && orderContext.currentPnL < -1000) {
+      contextRisk += 10; // Large losses
     } else if (orderContext.currentPnL && orderContext.currentPnL < -500) {
       contextRisk += 8;
     }
