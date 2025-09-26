@@ -26,46 +26,46 @@ export class RiskScoringService {
     // Cognitive performance analysis
     const cognitiveRisk = this.analyzeCognitivePerformance(signals, baseline);
     if (cognitiveRisk.score > 0) {
-      totalRisk += cognitiveRisk.score * 0.3; // 30% weight
-      confidence += cognitiveRisk.confidence * 0.3;
+      totalRisk += cognitiveRisk.score * 0.5; // 50% weight - cognitive is primary indicator
+      confidence += cognitiveRisk.confidence * 0.5;
       componentCount++;
     }
 
     // Behavioral biometrics analysis
     const behavioralRisk = this.analyzeBehavioralBiometrics(signals, baseline);
     if (behavioralRisk.score > 0) {
-      totalRisk += behavioralRisk.score * 0.25; // 25% weight
-      confidence += behavioralRisk.confidence * 0.25;
+      totalRisk += behavioralRisk.score * 0.4; // 40% weight - behavioral signals are strong
+      confidence += behavioralRisk.confidence * 0.4;
       componentCount++;
     }
 
     // Self-report analysis
     const selfReportRisk = this.analyzeSelfReport(signals);
     if (selfReportRisk.score > 0) {
-      totalRisk += selfReportRisk.score * 0.2; // 20% weight
-      confidence += selfReportRisk.confidence * 0.2;
+      totalRisk += selfReportRisk.score * 0.6; // 60% weight - direct self-report is reliable
+      confidence += selfReportRisk.confidence * 0.6;
       componentCount++;
     }
 
     // Voice prosody analysis (if available)
     const voiceRisk = this.analyzeVoiceProsody(signals);
     if (voiceRisk.score > 0) {
-      totalRisk += voiceRisk.score * 0.15; // 15% weight
-      confidence += voiceRisk.confidence * 0.15;
+      totalRisk += voiceRisk.score * 0.3; // 30% weight
+      confidence += voiceRisk.confidence * 0.3;
       componentCount++;
     }
 
     // Facial expression analysis (if available)
     const facialRisk = this.analyzeFacialExpressions(signals);
     if (facialRisk.score > 0) {
-      totalRisk += facialRisk.score * 0.1; // 10% weight
-      confidence += facialRisk.confidence * 0.1;
+      totalRisk += facialRisk.score * 0.3; // 30% weight
+      confidence += facialRisk.confidence * 0.3;
       componentCount++;
     }
 
-    // Contextual risk factors
+    // Contextual risk factors - additive, not multiplicative
     const contextualRisk = this.analyzeContextualFactors(orderContext);
-    totalRisk += contextualRisk * 0.1; // Additional 10% for context
+    totalRisk += contextualRisk; // Direct addition for contextual factors
 
     // Normalize confidence based on available components
     const normalizedConfidence = componentCount > 0 ? confidence / componentCount : 0;
@@ -354,39 +354,45 @@ export class RiskScoringService {
 
     let contextRisk = 0;
 
-    // High leverage increases risk
+    // High leverage increases risk significantly
     if (orderContext.leverage && orderContext.leverage > 10) {
-      contextRisk += 5;
+      contextRisk += 20; // Very high leverage
     } else if (orderContext.leverage && orderContext.leverage > 5) {
-      contextRisk += 2;
+      contextRisk += 10; // High leverage
     }
 
-    // Recent losses increase risk
-    if (orderContext.recentLosses && orderContext.recentLosses > 3) {
-      contextRisk += 8;
-    } else if (orderContext.recentLosses && orderContext.recentLosses > 1) {
-      contextRisk += 3;
+    // Recent losses are a major risk factor
+    if (orderContext.recentLosses) {
+      if (orderContext.recentLosses < -10000) {
+        contextRisk += 25; // Very large recent losses
+      } else if (orderContext.recentLosses < -5000) {
+        contextRisk += 15; // Large recent losses 
+      } else if (orderContext.recentLosses < -1000) {
+        contextRisk += 8; // Moderate recent losses
+      }
     }
 
     // Negative P&L increases risk
     if (orderContext.currentPnL && orderContext.currentPnL < -1000) {
-      contextRisk += 10;
+      contextRisk += 15;
     } else if (orderContext.currentPnL && orderContext.currentPnL < -500) {
-      contextRisk += 5;
+      contextRisk += 8;
     }
 
     // Time of day considerations (late trading hours)
     const hour = new Date(orderContext.timeOfDay).getHours();
     if (hour < 6 || hour > 22) {
-      contextRisk += 3; // Late night/early morning trading
+      contextRisk += 5; // Late night/early morning trading
     }
 
     // Market volatility
-    if (orderContext.marketVolatility && orderContext.marketVolatility > 0.8) {
-      contextRisk += 5;
+    if (orderContext.marketVolatility && orderContext.marketVolatility > 1.0) {
+      contextRisk += 15; // Very high volatility
+    } else if (orderContext.marketVolatility && orderContext.marketVolatility > 0.8) {
+      contextRisk += 8; // High volatility
     }
 
-    return Math.min(15, contextRisk); // Cap contextual risk at 15%
+    return Math.min(40, contextRisk); // Cap contextual risk at 40 points
   }
 
   private calculateVariance(values: number[]): number {
