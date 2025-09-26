@@ -202,31 +202,71 @@ export class EmotionGuardService {
 
   async updateAssessmentFacialMetrics(
     assessmentId: string,
-    facialMetrics: {
+    facialMetrics?: {
       isPresent: boolean;
       blinkRate: number;
       eyeAspectRatio: number;
       jawOpenness: number;
       browFurrow: number;
       gazeStability: number;
-    }
+    },
+    stressLevel?: number
   ): Promise<void> {
     console.log('🔍 updateAssessmentFacialMetrics received:', {
       assessmentId,
-      facialMetrics
+      facialMetrics: !!facialMetrics,
+      stressLevel
     });
 
-    // Calculate facial expression score from the metrics
-    const facialExpressionScore = this.calculateFacialExpressionScoreFromMetrics(facialMetrics);
-    
-    console.log('🧮 Calculated facialExpressionScore:', facialExpressionScore);
+    const updateData: any = {};
 
-    await storage.updateAssessment(assessmentId, {
-      facialMetrics,
-      facialExpressionScore,
-    });
+    // Process facial metrics if provided
+    if (facialMetrics) {
+      const facialExpressionScore = this.calculateFacialExpressionScoreFromMetrics(facialMetrics);
+      console.log('🧮 Calculated facialExpressionScore:', facialExpressionScore);
+      
+      updateData.facialMetrics = facialMetrics;
+      updateData.facialExpressionScore = facialExpressionScore;
+    }
 
-    console.log('✓ Assessment updated with facial metrics and score');
+    // Process stress level if provided
+    if (stressLevel !== undefined) {
+      console.log('🔍 Updating selfReportStress to:', stressLevel);
+      updateData.selfReportStress = stressLevel;
+    }
+
+    // Update the assessment with new data
+    await storage.updateAssessment(assessmentId, updateData);
+
+    // CRITICAL: Recalculate risk score if stress level was updated
+    if (stressLevel !== undefined) {
+      const assessment = await storage.getAssessment(assessmentId);
+      if (assessment) {
+        // Map assessment data to signals format for risk calculation
+        const signals: AssessmentSignals = {
+          stressLevel: assessment.selfReportStress,
+          behavioralMetrics: assessment.behavioralMetrics,
+          facialMetrics: assessment.facialMetrics,
+          voiceProsodyScore: assessment.voiceProsodyScore,
+          stroopResults: assessment.stroopTestResults,
+        };
+        
+        const baseline = await storage.getUserBaseline(assessment.userId);
+        const policy = await storage.getPolicy(assessment.policyId);
+        
+        const riskResult = await this.riskScoring.calculateRiskScore(
+          signals, 
+          baseline || undefined,
+          assessment.orderContext,
+          policy || undefined
+        );
+        
+        await storage.updateAssessment(assessmentId, { riskScore: riskResult.riskScore });
+        console.log('🔍 Recalculated risk score after stress level update:', riskResult.riskScore);
+      }
+    }
+
+    console.log('✓ Assessment updated with data:', updateData);
 
     // Create audit log safely - don't fail the entire operation if audit log fails
     try {

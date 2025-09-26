@@ -433,9 +433,11 @@ export class RiskScoringService {
       }
     }
 
-    // Negative P&L increases risk
-    if (orderContext.currentPnL && orderContext.currentPnL < -1000) {
-      contextRisk += 15;
+    // Significant negative P&L increases risk (adjust threshold to be more reasonable)
+    if (orderContext.currentPnL && orderContext.currentPnL < -5000) {
+      contextRisk += 15; // Very large losses
+    } else if (orderContext.currentPnL && orderContext.currentPnL < -2500) {
+      contextRisk += 8; // Large losses
     } else if (orderContext.currentPnL && orderContext.currentPnL < -500) {
       contextRisk += 8;
     }

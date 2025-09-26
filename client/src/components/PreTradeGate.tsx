@@ -103,13 +103,9 @@ export function PreTradeGate({
     }
     
     try {
-      // If we have facial metrics to add to the existing assessment, update them
-      if (facialMetrics) {
-        console.log('📝 Updating assessment with facial metrics');
-        await updateAssessment(stroopResults, stressLevel[0], facialMetrics);
-      } else {
-        console.log('📝 No facial metrics to update - proceeding to results');
-      }
+      // Always update assessment with stress level and any available data
+      console.log('📝 Updating assessment with stress level:', stressLevel[0], 'and facial metrics:', !!facialMetrics);
+      await updateAssessment(stroopResults, stressLevel[0], facialMetrics);
       
       // Proceed to risk results only if we have a valid assessment
       console.log('📝 Proceeding to risk results with assessment:', currentAssessment.assessmentId);
@@ -126,16 +122,11 @@ export function PreTradeGate({
     setFacialMetrics(metrics);
   };
 
-  // Auto-progress to results when assessment becomes available
+  // Debug current assessment changes (removed auto-progression - user must complete self-report manually)
   useEffect(() => {
     console.log('🔍 useEffect triggered: currentAssessment=', !!currentAssessment, ', currentPhase=', currentPhase);
-    if (currentAssessment && currentPhase === 'selfReport') {
-      console.log('🎯 Assessment completed while in selfReport phase - auto-progressing to results');
-      console.log('🎯 Assessment details:', currentAssessment.assessmentId, currentAssessment.verdict);
-      // Give a brief moment for user to finish their current action, then progress
-      setTimeout(() => {
-        setCurrentPhase('riskResults');
-      }, 500);
+    if (currentAssessment) {
+      console.log('🔧 PreTradeGate: currentAssessment changed to:', currentAssessment.assessmentId);
     }
   }, [currentAssessment, currentPhase]);
 

@@ -124,18 +124,24 @@ export function useEmotionGuard(userId = 'demo-user') {
     }
 
     try {
-      // If we have facial metrics, update them via the dedicated endpoint
-      if (facialMetrics) {
+      // If we have any data to update (facial metrics or stress level), send it to the backend
+      if (facialMetrics || stressLevel !== undefined) {
+        const updateData: any = {};
+        if (facialMetrics) {
+          updateData.facialMetrics = facialMetrics;
+        }
+        if (stressLevel !== undefined) {
+          updateData.stressLevel = stressLevel;
+        }
+        
         await fetch(`/api/emotion-guard/assessments/${currentAssessment.assessmentId}/facial-metrics`, {
           method: 'PUT',
           headers: {
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify({
-            facialMetrics,
-          }),
+          body: JSON.stringify(updateData),
         });
-        console.log('✓ Facial metrics successfully updated in assessment');
+        console.log('✓ Assessment data successfully updated:', updateData);
       }
 
       // Fetch the updated assessment to get the latest data including calculated scores

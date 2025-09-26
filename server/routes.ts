@@ -364,13 +364,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Update assessment with facial metrics
+  // Update assessment with facial metrics and/or stress level
   app.put('/api/emotion-guard/assessments/:id/facial-metrics', async (req, res) => {
     try {
       const assessmentId = req.params.id;
-      const { facialMetrics } = req.body;
+      const { facialMetrics, stressLevel } = req.body;
       
-      await emotionGuard.updateAssessmentFacialMetrics(assessmentId, facialMetrics);
+      console.log('🔍 updateAssessmentFacialMetrics received:', { assessmentId, facialMetrics: !!facialMetrics, stressLevel });
+      
+      await emotionGuard.updateAssessmentFacialMetrics(assessmentId, facialMetrics, stressLevel);
       
       res.json({ success: true });
     } catch (error) {
