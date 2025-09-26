@@ -173,10 +173,60 @@ export class FaceDetectionService {
     } else if (this.camera && this.faceMesh) {
       this.camera.start();
       console.log('Face detection started with MediaPipe');
+      
+      // Start watchdog timer to detect if MediaPipe fails
+      this.startMediaPipeWatchdog();
     } else {
       console.error('Cannot start detection: neither camera nor fallback mode available');
       return;
     }
+  }
+
+  private lastMetricTime = 0;
+  private watchdogInterval?: NodeJS.Timeout;
+
+  private startMediaPipeWatchdog(): void {
+    this.lastMetricTime = Date.now();
+    
+    this.watchdogInterval = setInterval(() => {
+      if (!this.isRunning) return;
+      
+      const timeSinceLastMetric = Date.now() - this.lastMetricTime;
+      
+      // If no metrics received for 5 seconds, switch to fallback
+      if (timeSinceLastMetric > 5000 && !this.fallbackMode) {
+        console.warn('MediaPipe detection appears to have failed, switching to fallback mode');
+        this.switchToFallbackMode();
+      }
+    }, 2000);
+  }
+
+  private switchToFallbackMode(): void {
+    // Stop MediaPipe components
+    if (this.camera) {
+      this.camera.stop();
+      this.camera = null;
+    }
+    if (this.watchdogInterval) {
+      clearInterval(this.watchdogInterval);
+      this.watchdogInterval = undefined;
+    }
+    
+    // Clean up MediaPipe resources
+    if (this.videoElement && this.videoElement.srcObject) {
+      const stream = this.videoElement.srcObject as MediaStream;
+      stream.getTracks().forEach(track => track.stop());
+    }
+    if (this.videoElement && this.videoElement.parentNode) {
+      this.videoElement.parentNode.removeChild(this.videoElement);
+    }
+    this.videoElement = null;
+    this.faceMesh = null;
+    
+    // Switch to fallback
+    this.fallbackMode = true;
+    console.log('Switched to fallback mode - generating simulated metrics');
+    this.startFallbackDetection();
   }
 
   private startFallbackDetection(): void {
@@ -217,6 +267,9 @@ export class FaceDetectionService {
 
       // Notify all callbacks
       this.callbacks.forEach(callback => callback(metrics));
+      
+      // Update last metric time for watchdog
+      this.lastMetricTime = Date.now();
     }, 500); // Update every 500ms for realistic feel
   }
 
@@ -227,6 +280,11 @@ export class FaceDetectionService {
     if (this.fallbackInterval) {
       clearInterval(this.fallbackInterval);
       this.fallbackInterval = undefined;
+    }
+    
+    if (this.watchdogInterval) {
+      clearInterval(this.watchdogInterval);
+      this.watchdogInterval = undefined;
     }
     
     if (this.camera) {
@@ -288,6 +346,9 @@ export class FaceDetectionService {
     
     // Notify all callbacks
     this.callbacks.forEach(callback => callback(metrics));
+    
+    // Update last metric time for watchdog
+    this.lastMetricTime = Date.now();
   }
 
   private calculateEyeAspectRatio(landmarks: any[], eyeIndices: any): number {

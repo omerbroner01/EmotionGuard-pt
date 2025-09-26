@@ -13,6 +13,7 @@ import type { OrderContext, StroopTrial } from '@/types/emotionGuard';
 import type { FaceMetrics } from '@/lib/faceDetection';
 import { Slider } from '@/components/ui/slider';
 import { Textarea } from '@/components/ui/textarea';
+import { Camera } from 'lucide-react';
 
 interface PreTradeGateProps {
   onClose: () => void;
@@ -156,10 +157,10 @@ export function PreTradeGate({ onClose, orderAction, orderContext }: PreTradeGat
               <BiometricTracker />
               <div className="border rounded-lg p-4">
                 <h4 className="text-sm font-semibold mb-2">Facial Stress Detection</h4>
-                <FaceDetectionDisplay 
-                  onMetricsUpdate={handleFacialMetrics}
-                  autoStart={true}
-                />
+                <div className="text-center py-4">
+                  <Camera className="mx-auto h-12 w-12 text-muted-foreground mb-2" />
+                  <p className="text-sm text-muted-foreground">Facial detection running...</p>
+                </div>
               </div>
             </div>
             
@@ -301,6 +302,13 @@ export function PreTradeGate({ onClose, orderAction, orderContext }: PreTradeGat
   return (
     <Dialog open={true} onOpenChange={onClose}>
       <DialogContent className="bg-card border-border max-w-md" data-testid="dialog-pretrademain">
+        {/* Hidden facial detection that runs throughout entire assessment */}
+        <div style={{ display: 'none' }}>
+          <FaceDetectionDisplay 
+            onMetricsUpdate={handleFacialMetrics}
+            autoStart={true}
+          />
+        </div>
         <div className="p-6">
           {renderPhase()}
         </div>
