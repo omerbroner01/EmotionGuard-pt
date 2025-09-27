@@ -365,12 +365,14 @@ export class EmotionGuardService {
       browFurrow: number;
       gazeStability: number;
     },
-    stressLevel?: number
+    stressLevel?: number,
+    cognitiveResults?: any[]
   ): Promise<void> {
     console.log('🔍 updateAssessmentFacialMetrics received:', {
       assessmentId,
       facialMetrics: !!facialMetrics,
-      stressLevel
+      stressLevel,
+      cognitiveResults: cognitiveResults?.length || 0
     });
 
     const updateData: any = {};
@@ -389,6 +391,14 @@ export class EmotionGuardService {
     if (stressLevel !== undefined) {
       console.log('🔍 Updating selfReportStress to:', stressLevel);
       updateData.selfReportStress = stressLevel;
+    }
+
+    // Process cognitive results if provided  
+    let cognitiveAnalytics: any = undefined;
+    if (cognitiveResults && cognitiveResults.length > 0) {
+      console.log('🧠 Processing cognitive results:', cognitiveResults.length, 'test results');
+      cognitiveAnalytics = this.processCognitiveResults(cognitiveResults);
+      updateData.cognitiveAnalytics = cognitiveAnalytics;
     }
 
     // Update the assessment with new data
@@ -436,6 +446,84 @@ export class EmotionGuardService {
       console.error('⚠️ Audit log creation failed (non-critical):', auditError);
       // Continue - facial metrics update was successful
     }
+  }
+
+  private processCognitiveResults(cognitiveResults: any[]): any {
+    // Extract key metrics from advanced cognitive assessment results
+    const allTrials = cognitiveResults.flatMap(result => result.trials || []);
+    
+    if (allTrials.length === 0) {
+      return {
+        overallScore: 0.5,
+        reactionTimeMs: 800,
+        accuracy: 0.5,
+        consistency: 0.5,
+        attentionMetrics: {
+          focusLapses: 0,
+          vigilanceDecline: 0
+        },
+        stressIndicators: {
+          performanceDecline: 0,
+          errorRate: 0.5,
+          responseVariability: 0.3
+        }
+      };
+    }
+
+    // Calculate aggregated metrics across all test types
+    const reactionTimes = allTrials.map(t => t.reactionTimeMs);
+    const avgReactionTime = reactionTimes.reduce((sum, rt) => sum + rt, 0) / reactionTimes.length;
+    const accuracy = allTrials.filter(t => t.correct).length / allTrials.length;
+    
+    // Calculate reaction time consistency
+    const reactionVariance = reactionTimes.reduce((sum, rt) => 
+      sum + Math.pow(rt - avgReactionTime, 2), 0) / reactionTimes.length;
+    const consistency = Math.max(0, Math.min(1, 1 - reactionVariance / 1000000));
+
+    // Attention and stress indicators from all cognitive test results
+    const focusLapses = allTrials.filter(t => t.hesitationCount > 2).length;
+    
+    // Vigilance decline: compare first vs last half performance
+    const firstHalf = allTrials.slice(0, Math.floor(allTrials.length / 2));
+    const lastHalf = allTrials.slice(Math.floor(allTrials.length / 2));
+    const vigilanceDecline = (firstHalf.filter(t => t.correct).length / firstHalf.length) - 
+                            (lastHalf.filter(t => t.correct).length / lastHalf.length);
+
+    // Performance decline and error rate
+    const errorRate = 1 - accuracy;
+    const performanceDecline = Math.max(0, vigilanceDecline);
+    const responseVariability = Math.sqrt(reactionVariance) / avgReactionTime;
+
+    // Overall cognitive score (weighted combination)
+    const overallScore = (
+      accuracy * 0.4 +
+      Math.max(0, Math.min(1, 1 - (avgReactionTime - 500) / 2000)) * 0.3 +
+      consistency * 0.2 +
+      Math.max(0, 1 - performanceDecline) * 0.1
+    );
+
+    console.log('🧠 Cognitive analytics computed:', {
+      trials: allTrials.length,
+      overallScore: overallScore.toFixed(2),
+      avgReactionTime: Math.round(avgReactionTime),
+      accuracy: (accuracy * 100).toFixed(1) + '%'
+    });
+
+    return {
+      overallScore,
+      reactionTimeMs: Math.round(avgReactionTime),
+      accuracy,
+      consistency,
+      attentionMetrics: {
+        focusLapses,
+        vigilanceDecline: Math.max(0, vigilanceDecline)
+      },
+      stressIndicators: {
+        performanceDecline,
+        errorRate,
+        responseVariability: Math.min(1, responseVariability)
+      }
+    };
   }
 
   async recordOverride(

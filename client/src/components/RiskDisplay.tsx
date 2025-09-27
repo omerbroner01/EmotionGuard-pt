@@ -1,8 +1,27 @@
 import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Progress } from '@/components/ui/progress';
+import { Brain, Zap, Target, AlertCircle } from 'lucide-react';
 import type { AssessmentResult } from '@/types/emotionGuard';
 
 interface RiskDisplayProps {
-  assessment: AssessmentResult;
+  assessment: AssessmentResult & {
+    cognitiveAnalytics?: {
+      overallScore: number;
+      reactionTimeMs: number;
+      accuracy: number;
+      consistency: number;
+      attentionMetrics: {
+        focusLapses: number;
+        vigilanceDecline: number;
+      };
+      stressIndicators: {
+        performanceDecline: number;
+        errorRate: number;
+        responseVariability: number;
+      };
+    };
+  };
   onProceed: () => void;
   onCooldown: () => void;
   onBlock: () => void;
@@ -75,6 +94,114 @@ export function RiskDisplay({ assessment, onProceed, onCooldown, onBlock, onOver
           </div>
         </div>
       </div>
+
+      {/* Advanced Cognitive Analytics */}
+      {assessment.cognitiveAnalytics && (
+        <div className="mb-4">
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base flex items-center gap-2">
+                <Brain className="w-4 h-4" />
+                Cognitive Performance Analysis
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {/* Overall Performance Score */}
+              <div className="flex justify-between items-center">
+                <span className="text-sm text-muted-foreground">Overall Performance</span>
+                <span className="text-lg font-semibold">
+                  {(assessment.cognitiveAnalytics.overallScore * 100).toFixed(0)}%
+                </span>
+              </div>
+              <Progress value={assessment.cognitiveAnalytics.overallScore * 100} className="h-2" />
+
+              {/* Key Metrics Grid */}
+              <div className="grid grid-cols-2 gap-4 text-sm">
+                <div className="space-y-2">
+                  <div className="flex items-center gap-1">
+                    <Zap className="w-3 h-3" />
+                    <span className="text-muted-foreground">Reaction Time</span>
+                  </div>
+                  <span className="font-mono text-lg">
+                    {assessment.cognitiveAnalytics.reactionTimeMs}ms
+                  </span>
+                  <div className="text-xs text-muted-foreground">
+                    {assessment.cognitiveAnalytics.reactionTimeMs < 500 ? 'Fast' : 
+                     assessment.cognitiveAnalytics.reactionTimeMs < 800 ? 'Normal' : 'Slow'}
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <div className="flex items-center gap-1">
+                    <Target className="w-3 h-3" />
+                    <span className="text-muted-foreground">Accuracy</span>
+                  </div>
+                  <span className="font-mono text-lg">
+                    {(assessment.cognitiveAnalytics.accuracy * 100).toFixed(0)}%
+                  </span>
+                  <div className="text-xs text-muted-foreground">
+                    {assessment.cognitiveAnalytics.accuracy > 0.9 ? 'Excellent' : 
+                     assessment.cognitiveAnalytics.accuracy > 0.7 ? 'Good' : 'Needs Focus'}
+                  </div>
+                </div>
+              </div>
+
+              {/* Attention & Stress Indicators */}
+              <div className="border-t pt-3">
+                <div className="text-sm font-medium mb-2 flex items-center gap-1">
+                  <AlertCircle className="w-3 h-3" />
+                  Stress Indicators
+                </div>
+                
+                <div className="space-y-2 text-xs">
+                  <div className="flex justify-between">
+                    <span>Focus Lapses</span>
+                    <span className={`font-medium ${
+                      assessment.cognitiveAnalytics.attentionMetrics.focusLapses > 3 ? 'text-destructive' : 
+                      assessment.cognitiveAnalytics.attentionMetrics.focusLapses > 1 ? 'text-yellow-600' : 'text-green-600'
+                    }`}>
+                      {assessment.cognitiveAnalytics.attentionMetrics.focusLapses}
+                    </span>
+                  </div>
+                  
+                  <div className="flex justify-between">
+                    <span>Vigilance Decline</span>
+                    <span className={`font-medium ${
+                      assessment.cognitiveAnalytics.attentionMetrics.vigilanceDecline > 0.2 ? 'text-destructive' : 
+                      assessment.cognitiveAnalytics.attentionMetrics.vigilanceDecline > 0.1 ? 'text-yellow-600' : 'text-green-600'
+                    }`}>
+                      {(assessment.cognitiveAnalytics.attentionMetrics.vigilanceDecline * 100).toFixed(1)}%
+                    </span>
+                  </div>
+                  
+                  <div className="flex justify-between">
+                    <span>Response Variability</span>
+                    <span className={`font-medium ${
+                      assessment.cognitiveAnalytics.stressIndicators.responseVariability > 0.3 ? 'text-destructive' : 
+                      assessment.cognitiveAnalytics.stressIndicators.responseVariability > 0.2 ? 'text-yellow-600' : 'text-green-600'
+                    }`}>
+                      {(assessment.cognitiveAnalytics.stressIndicators.responseVariability * 100).toFixed(1)}%
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Performance Summary */}
+              <div className="border-t pt-3">
+                <div className="text-xs text-muted-foreground">
+                  {assessment.cognitiveAnalytics.stressIndicators.performanceDecline > 0.15 ? (
+                    <span className="text-destructive">⚠️ Performance declined during assessment - consider taking a break</span>
+                  ) : assessment.cognitiveAnalytics.stressIndicators.errorRate > 0.2 ? (
+                    <span className="text-yellow-600">⚡ Elevated error rate detected - attention may be compromised</span>
+                  ) : (
+                    <span className="text-green-600">✅ Cognitive performance within normal ranges</span>
+                  )}
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
       
       {/* Action Buttons */}
       <div className="space-y-2" data-testid="container-actions">

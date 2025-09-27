@@ -16,7 +16,7 @@ export function useEmotionGuard(userId = 'demo-user') {
     console.log('🔧 Previous currentAssessment was:', currentAssessment);
     originalSetCurrentAssessment(newAssessment);
   }, [currentAssessment, originalSetCurrentAssessment]);
-  const { startTracking, stopTracking, isTracking } = useBiometrics();
+  const { startTracking, stopTracking, convertToBasicFormat, isTracking } = useBiometrics();
 
   // Get user baseline
   const { data: baseline } = useQuery<UserBaseline | null>({
@@ -35,11 +35,13 @@ export function useEmotionGuard(userId = 'demo-user') {
       orderContext: OrderContext;
       fastMode?: boolean;
       stroopResults?: any[];
+      cognitiveResults?: any[];
       stressLevel?: number;
       facialMetrics?: FaceMetrics | null;
     }) => {
       console.log('🛠️ assessmentMutation.mutationFn called with data:', data);
-      const biometricData = stopTracking();
+      const rawBiometricData = stopTracking();
+      const biometricData = convertToBasicFormat(rawBiometricData);
       console.log('🛠️ Biometric data collected:', biometricData);
       
       const signals = {
@@ -47,6 +49,7 @@ export function useEmotionGuard(userId = 'demo-user') {
         keystrokeTimings: biometricData.keystrokeTimings,
         clickLatency: biometricData.clickLatency,
         stroopTrials: data.stroopResults,
+        cognitiveResults: data.cognitiveResults,
         stressLevel: data.stressLevel,
         facialMetrics: data.facialMetrics || undefined,
       };
@@ -126,7 +129,7 @@ export function useEmotionGuard(userId = 'demo-user') {
     return result;
   }, [startTracking, assessmentMutation]);
 
-  const updateAssessment = useCallback(async (stroopResults?: any[], stressLevel?: number, facialMetrics?: FaceMetrics | null) => {
+  const updateAssessment = useCallback(async (stroopResults?: any[], stressLevel?: number, facialMetrics?: FaceMetrics | null, cognitiveResults?: any[]) => {
     // Use the current assessment that was created by startAssessment
     if (!currentAssessment) {
       console.error('No current assessment to update');
@@ -134,14 +137,18 @@ export function useEmotionGuard(userId = 'demo-user') {
     }
 
     try {
-      // If we have any data to update (facial metrics or stress level), send it to the backend
-      if (facialMetrics || stressLevel !== undefined) {
+      // If we have any data to update (facial metrics, stress level, or cognitive results), send it to the backend
+      if (facialMetrics || stressLevel !== undefined || cognitiveResults) {
         const updateData: any = {};
         if (facialMetrics) {
           updateData.facialMetrics = facialMetrics;
         }
         if (stressLevel !== undefined) {
           updateData.stressLevel = stressLevel;
+        }
+        if (cognitiveResults && cognitiveResults.length > 0) {
+          updateData.cognitiveResults = cognitiveResults;
+          console.log('📊 Including cognitive results in update:', cognitiveResults.length, 'test results');
         }
         
         await fetch(`/api/emotion-guard/assessments/${currentAssessment.assessmentId}/facial-metrics`, {

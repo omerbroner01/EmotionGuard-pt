@@ -18,11 +18,55 @@ export interface StroopTrial {
   correct: boolean;
 }
 
+export interface CognitiveTestResult {
+  testType: string;
+  trials: TestTrial[];
+  overallScore: number;
+  reactionTimeStats: {
+    mean: number;
+    median: number;
+    standardDeviation: number;
+    consistency: number;
+  };
+  accuracyStats: {
+    overall: number;
+    byDifficulty: Record<string, number>;
+  };
+  attentionMetrics: {
+    focusLapses: number;
+    vigilanceDecline: number;
+    taskSwitchingCost: number;
+  };
+  stressIndicators: {
+    performanceDecline: number;
+    errorRate: number;
+    responseVariability: number;
+  };
+}
+
+export interface TestTrial {
+  testType: string;
+  trialNumber: number;
+  stimulus: string;
+  correctResponse: string;
+  userResponse: string;
+  reactionTimeMs: number;
+  correct: boolean;
+  difficulty: 'easy' | 'medium' | 'hard';
+  timestamp: number;
+  hesitationCount: number;
+  responsePattern: string;
+  displayColor?: string;
+  stimulusType?: string;
+  memoryType?: string;
+}
+
 export interface AssessmentSignals {
   mouseMovements?: number[];
   keystrokeTimings?: number[];
   clickLatency?: number;
   stroopTrials?: StroopTrial[];
+  cognitiveResults?: CognitiveTestResult[];
   stressLevel?: number;
   voiceProsodyFeatures?: {
     pitch: number;

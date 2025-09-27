@@ -443,11 +443,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.put('/api/emotion-guard/assessments/:id/facial-metrics', async (req, res) => {
     try {
       const assessmentId = req.params.id;
-      const { facialMetrics, stressLevel } = req.body;
+      const { facialMetrics, stressLevel, cognitiveResults } = req.body;
       
-      console.log('🔍 updateAssessmentFacialMetrics received:', { assessmentId, facialMetrics: !!facialMetrics, stressLevel });
+      console.log('🔍 updateAssessmentFacialMetrics received:', { assessmentId, facialMetrics: !!facialMetrics, stressLevel, cognitiveResults: cognitiveResults?.length || 0 });
       
-      await emotionGuard.updateAssessmentFacialMetrics(assessmentId, facialMetrics, stressLevel);
+      await emotionGuard.updateAssessmentFacialMetrics(assessmentId, facialMetrics, stressLevel, cognitiveResults);
       
       res.json({ success: true });
     } catch (error) {

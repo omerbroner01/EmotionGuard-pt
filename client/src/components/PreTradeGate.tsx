@@ -3,12 +3,13 @@ import { Dialog, DialogContent } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { StroopTest } from './StroopTest';
+import { AdvancedCognitiveAssessment } from './AdvancedCognitiveAssessment';
 import { BreathingExercise } from './BreathingExercise';
 import { RiskDisplay } from './RiskDisplay';
 import { MicroJournal } from './MicroJournal';
 import { BiometricTracker } from './BiometricTracker';
 import { FaceDetectionDisplay } from './FaceDetectionDisplay';
-import type { OrderContext, StroopTrial } from '@/types/emotionGuard';
+import type { OrderContext, StroopTrial, CognitiveTestResult } from '@/types/emotionGuard';
 import type { FaceMetrics } from '@/lib/faceDetection';
 import { Slider } from '@/components/ui/slider';
 import { Textarea } from '@/components/ui/textarea';
@@ -53,6 +54,8 @@ export function PreTradeGate({
   const [currentPhase, setCurrentPhase] = useState<AssessmentPhase>('quickCheck');
   const [quickCheckProgress, setQuickCheckProgress] = useState(0);
   const [stroopResults, setStroopResults] = useState<StroopTrial[]>([]);
+  const [cognitiveResults, setCognitiveResults] = useState<CognitiveTestResult[]>([]);
+  const [useAdvancedCognitive, setUseAdvancedCognitive] = useState(true);
   const [stressLevel, setStressLevel] = useState([5]);
   const [overrideReason, setOverrideReason] = useState('');
   const [facialMetrics, setFacialMetrics] = useState<FaceMetrics | null>(null);
@@ -107,6 +110,26 @@ export function PreTradeGate({
     setCurrentPhase('selfReport');
   };
 
+  const handleAdvancedCognitiveComplete = (results: CognitiveTestResult[]) => {
+    console.log('🧠 Advanced cognitive assessment completed:', results);
+    setCognitiveResults(results);
+    
+    // Extract Stroop results for backward compatibility
+    const stroopTest = results.find(r => r.testType === 'stroop');
+    if (stroopTest) {
+      const stroopTrials: StroopTrial[] = stroopTest.trials.map(trial => ({
+        word: trial.stimulus,
+        color: trial.displayColor || '',
+        response: trial.userResponse,
+        reactionTimeMs: trial.reactionTimeMs,
+        correct: trial.correct
+      }));
+      setStroopResults(stroopTrials);
+    }
+    
+    setCurrentPhase('selfReport');
+  };
+
   const handleSelfReportComplete = async () => {
     console.log('📝 handleSelfReportComplete called');
     console.log('📝 currentAssessment exists:', !!currentAssessment);
@@ -121,8 +144,8 @@ export function PreTradeGate({
     
     try {
       // Always update assessment with stress level and any available data
-      console.log('📝 Updating assessment with stress level:', stressLevel[0], 'and facial metrics:', !!facialMetrics);
-      await updateAssessment(stroopResults, stressLevel[0], facialMetrics);
+      console.log('📝 Updating assessment with stress level:', stressLevel[0], 'cognitive results:', cognitiveResults.length, 'and facial metrics:', !!facialMetrics);
+      await updateAssessment(stroopResults, stressLevel[0], facialMetrics, cognitiveResults);
       
       // Proceed to risk results only if we have a valid assessment
       console.log('📝 Proceeding to risk results with assessment:', currentAssessment.assessmentId);
@@ -234,11 +257,65 @@ export function PreTradeGate({
         );
 
       case 'stroopTest':
-        return (
-          <StroopTest 
-            onComplete={handleStroopComplete}
-            data-testid="component-strooptest"
-          />
+        return useAdvancedCognitive ? (
+          <div>
+            <div className="mb-4 text-center">
+              <h3 className="text-lg font-semibold mb-2">Advanced Cognitive Assessment</h3>
+              <p className="text-sm text-muted-foreground">
+                Enhanced stress detection through multiple cognitive tests
+              </p>
+            </div>
+            <AdvancedCognitiveAssessment
+              onComplete={handleAdvancedCognitiveComplete}
+              config={{
+                includeStroop: true,
+                includeReactionTime: true,
+                includeWorkingMemory: true,
+                includeAttentionSwitch: false,
+                fastMode: true, // Optimized for pre-trade assessment
+                adaptiveDifficulty: true
+              }}
+            />
+            <div className="mt-4 text-center">
+              <Button 
+                variant="outline" 
+                size="sm"
+                onClick={() => {
+                  console.log('🔄 Switching to basic Stroop test');
+                  setUseAdvancedCognitive(false);
+                }}
+                className="text-xs text-muted-foreground"
+              >
+                Use Basic Test Instead
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <div>
+            <div className="mb-4 text-center">
+              <h3 className="text-lg font-semibold mb-2">Basic Cognitive Test</h3>
+              <p className="text-sm text-muted-foreground">
+                Quick Stroop test for stress assessment
+              </p>
+            </div>
+            <StroopTest 
+              onComplete={handleStroopComplete}
+              data-testid="component-strooptest"
+            />
+            <div className="mt-4 text-center">
+              <Button 
+                variant="outline" 
+                size="sm"
+                onClick={() => {
+                  console.log('🔄 Switching to advanced cognitive assessment');
+                  setUseAdvancedCognitive(true);
+                }}
+                className="text-xs text-muted-foreground"
+              >
+                Use Advanced Assessment Instead
+              </Button>
+            </div>
+          </div>
         );
 
       case 'selfReport':
