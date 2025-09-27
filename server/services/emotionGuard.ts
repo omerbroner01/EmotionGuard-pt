@@ -374,10 +374,11 @@ export class EmotionGuardService {
     });
 
     const updateData: any = {};
+    let facialExpressionScore: number | undefined = undefined;
 
     // Process facial metrics if provided
     if (facialMetrics) {
-      const facialExpressionScore = this.calculateFacialExpressionScoreFromMetrics(facialMetrics);
+      facialExpressionScore = this.calculateFacialExpressionScoreFromMetrics(facialMetrics);
       console.log('🧮 Calculated facialExpressionScore:', facialExpressionScore);
       
       updateData.facialMetrics = facialMetrics;
