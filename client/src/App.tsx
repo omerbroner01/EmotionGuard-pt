@@ -6,6 +6,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import Dashboard from "@/pages/Dashboard";
 import AdminConsole from "@/pages/AdminConsole";
 import PerformanceDashboard from "@/pages/PerformanceDashboard";
+import StressAnalytics from "@/pages/StressAnalytics";
 import NotFound from "@/pages/not-found";
 
 function Router() {
@@ -14,6 +15,7 @@ function Router() {
       <Route path="/" component={Dashboard} />
       <Route path="/admin" component={AdminConsole} />
       <Route path="/performance" component={PerformanceDashboard} />
+      <Route path="/analytics" component={StressAnalytics} />
       <Route component={NotFound} />
     </Switch>
   );
