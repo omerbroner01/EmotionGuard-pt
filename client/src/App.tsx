@@ -8,6 +8,7 @@ import AdminConsole from "@/pages/AdminConsole";
 import PerformanceDashboard from "@/pages/PerformanceDashboard";
 import StressAnalytics from "@/pages/StressAnalytics";
 import TeamMonitoring from "@/pages/TeamMonitoring";
+import AlertManagement from "@/pages/AlertManagement";
 import NotFound from "@/pages/not-found";
 
 function Router() {
@@ -18,6 +19,7 @@ function Router() {
       <Route path="/performance" component={PerformanceDashboard} />
       <Route path="/analytics" component={StressAnalytics} />
       <Route path="/monitoring" component={TeamMonitoring} />
+      <Route path="/alerts" component={AlertManagement} />
       <Route component={NotFound} />
     </Switch>
   );

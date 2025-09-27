@@ -108,6 +108,24 @@ export default function Dashboard() {
                 <span>Performance Analytics</span>
               </div>
             </Link>
+            <Link href="/analytics">
+              <div className="flex items-center space-x-3 text-muted-foreground hover:text-foreground px-3 py-2 rounded-md hover:bg-muted smooth-transition cursor-pointer" data-testid="nav-analytics">
+                <span className="text-sm">📈</span>
+                <span>Stress Analytics</span>
+              </div>
+            </Link>
+            <Link href="/monitoring">
+              <div className="flex items-center space-x-3 text-muted-foreground hover:text-foreground px-3 py-2 rounded-md hover:bg-muted smooth-transition cursor-pointer" data-testid="nav-monitoring">
+                <span className="text-sm">👥</span>
+                <span>Team Monitoring</span>
+              </div>
+            </Link>
+            <Link href="/alerts">
+              <div className="flex items-center space-x-3 text-muted-foreground hover:text-foreground px-3 py-2 rounded-md hover:bg-muted smooth-transition cursor-pointer" data-testid="nav-alerts">
+                <span className="text-sm">🚨</span>
+                <span>Alert Management</span>
+              </div>
+            </Link>
             <a href="#" className="flex items-center space-x-3 text-muted-foreground hover:text-foreground px-3 py-2 rounded-md hover:bg-muted smooth-transition" data-testid="nav-privacy">
               <span className="text-sm">🔒</span>
               <span>Privacy</span>

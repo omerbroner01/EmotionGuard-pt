@@ -72,6 +72,38 @@ const overrideSchema = z.object({
   reason: z.string().min(10),
 });
 
+// Alert system validation schemas
+const alertPolicySchema = z.object({
+  name: z.string().min(1, "Policy name is required"),
+  description: z.string().optional(),
+  warningThreshold: z.number().min(0).max(100),
+  urgentThreshold: z.number().min(0).max(100),
+  criticalThreshold: z.number().min(0).max(100),
+  escalationDelay: z.number().min(0),
+  autoResolveDelay: z.number().min(0),
+  targetRoles: z.array(z.string()).default([]),
+  targetDesks: z.array(z.string()).default([]),
+  isActive: z.boolean().default(true)
+});
+
+const alertChannelSchema = z.object({
+  alertPolicyId: z.string(),
+  channelType: z.enum(['email', 'sms', 'webhook', 'dashboard', 'websocket']),
+  severity: z.enum(['warning', 'urgent', 'critical', 'all']),
+  recipients: z.array(z.string()).default([]),
+  template: z.string().optional(),
+  enabled: z.boolean().default(true),
+  maxFrequency: z.number().min(1).default(5),
+  cooldownMinutes: z.number().min(0).default(15)
+});
+
+const manualAlertSchema = z.object({
+  userId: z.string(),
+  severity: z.enum(['warning', 'urgent', 'critical']),
+  message: z.string().min(1, "Alert message is required"),
+  metadata: z.record(z.any()).optional()
+});
+
 const outcomeSchema = z.object({
   assessmentId: z.string(),
   outcome: z.object({
@@ -1149,6 +1181,178 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error('Team metrics calculation failed:', error);
       res.status(500).json({ message: 'Team metrics calculation failed' });
+    }
+  });
+
+  // ==========================================
+  // ADVANCED STRESS ALERT SYSTEM ENDPOINTS
+  // ==========================================
+
+  // Get all alert policies
+  app.get('/api/alerts/policies', async (req, res) => {
+    try {
+      const policies = await storage.getAlertPolicies();
+      res.json(policies);
+    } catch (error) {
+      console.error('Failed to fetch alert policies:', error);
+      res.status(500).json({ message: 'Failed to fetch alert policies' });
+    }
+  });
+
+  // Create new alert policy
+  app.post('/api/alerts/policies', async (req, res) => {
+    try {
+      const validatedData = alertPolicySchema.parse(req.body);
+      const newPolicy = await storage.createAlertPolicy(validatedData);
+      res.status(201).json(newPolicy);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: 'Validation error', errors: error.errors });
+      }
+      console.error('Failed to create alert policy:', error);
+      res.status(500).json({ message: 'Failed to create alert policy' });
+    }
+  });
+
+  // Update alert policy
+  app.put('/api/alerts/policies/:id', async (req, res) => {
+    try {
+      const { id } = req.params;
+      const validatedData = alertPolicySchema.partial().parse(req.body);
+      const updatedPolicy = await storage.updateAlertPolicy(id, validatedData);
+      res.json(updatedPolicy);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: 'Validation error', errors: error.errors });
+      }
+      console.error('Failed to update alert policy:', error);
+      res.status(500).json({ message: 'Failed to update alert policy' });
+    }
+  });
+
+  // Delete alert policy
+  app.delete('/api/alerts/policies/:id', async (req, res) => {
+    try {
+      const { id } = req.params;
+      await storage.deleteAlertPolicy(id);
+      res.status(204).send();
+    } catch (error) {
+      console.error('Failed to delete alert policy:', error);
+      res.status(500).json({ message: 'Failed to delete alert policy' });
+    }
+  });
+
+  // Get alert history with filtering and pagination
+  app.get('/api/alerts/history', async (req, res) => {
+    try {
+      const { 
+        page = 1, 
+        limit = 50, 
+        severity, 
+        resolved, 
+        userId, 
+        timeframe = '24h' 
+      } = req.query;
+      
+      const filters = {
+        severity: severity as string,
+        resolved: resolved ? resolved === 'true' : undefined,
+        userId: userId as string,
+        limit: parseInt(limit as string),
+        offset: (parseInt(page as string) - 1) * parseInt(limit as string)
+      };
+      
+      const { alerts, total } = await storage.getAlertHistory(filters);
+      
+      res.json({
+        alerts,
+        pagination: {
+          page: parseInt(page as string),
+          limit: parseInt(limit as string),
+          total,
+          totalPages: Math.ceil(total / parseInt(limit as string))
+        }
+      });
+    } catch (error) {
+      console.error('Failed to fetch alert history:', error);
+      res.status(500).json({ message: 'Failed to fetch alert history' });
+    }
+  });
+
+  // Get active (unresolved) alerts
+  app.get('/api/alerts/active', async (req, res) => {
+    try {
+      const activeAlerts = await storage.getActiveAlerts();
+      res.json(activeAlerts);
+    } catch (error) {
+      console.error('Failed to fetch active alerts:', error);
+      res.status(500).json({ message: 'Failed to fetch active alerts' });
+    }
+  });
+
+  // Resolve an alert
+  app.post('/api/alerts/:id/resolve', async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { resolutionNote } = req.body;
+      
+      const resolvedAlert = await storage.resolveAlert(id, 'current_user', resolutionNote);
+      res.json(resolvedAlert);
+    } catch (error) {
+      console.error('Failed to resolve alert:', error);
+      res.status(500).json({ message: 'Failed to resolve alert' });
+    }
+  });
+
+  // Get alert analytics and statistics
+  app.get('/api/alerts/analytics', async (req, res) => {
+    try {
+      const { timeframe = '24h' } = req.query;
+      
+      const analytics = await storage.getAlertAnalytics(timeframe as string);
+      res.json(analytics);
+    } catch (error) {
+      console.error('Failed to fetch alert analytics:', error);
+      res.status(500).json({ message: 'Failed to fetch alert analytics' });
+    }
+  });
+
+  // Manual alert trigger (for testing or manual intervention)
+  app.post('/api/alerts/trigger', async (req, res) => {
+    try {
+      const validatedData = manualAlertSchema.parse(req.body);
+      const { userId, severity, message, metadata } = validatedData;
+      
+      // Get default alert policy for manual triggers
+      const policies = await storage.getAlertPolicies();
+      const defaultPolicy = policies[0]; // Use first policy as default
+      
+      if (!defaultPolicy) {
+        return res.status(400).json({ message: 'No alert policy found for manual trigger' });
+      }
+      
+      const manualAlert = await storage.createAlertHistory({
+        alertPolicyId: defaultPolicy.id,
+        userId,
+        severity,
+        message,
+        alertType: 'manual_trigger',
+        stressLevel: severity === 'critical' ? 9.0 : severity === 'urgent' ? 7.5 : 6.0,
+        triggerThreshold: severity === 'critical' ? 90 : severity === 'urgent' ? 75 : 60,
+        metadata: {
+          triggered_by: 'supervisor',
+          manual_trigger: true,
+          ...metadata
+        }
+      });
+      
+      res.status(201).json(manualAlert);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: 'Validation error', errors: error.errors });
+      }
+      console.error('Failed to trigger manual alert:', error);
+      res.status(500).json({ message: 'Failed to trigger manual alert' });
     }
   });
 

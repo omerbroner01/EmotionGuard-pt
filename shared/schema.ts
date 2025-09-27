@@ -126,11 +126,82 @@ export const realTimeEvents = pgTable("real_time_events", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
+// Advanced Alert System Tables
+
+// Alert policies for configurable thresholds
+export const alertPolicies = pgTable("alert_policies", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull(),
+  description: text("description"),
+  // Configurable stress thresholds for different alert severity levels
+  warningThreshold: integer("warning_threshold").notNull().default(60), // 0-100
+  urgentThreshold: integer("urgent_threshold").notNull().default(75), // 0-100
+  criticalThreshold: integer("critical_threshold").notNull().default(90), // 0-100
+  // Escalation settings
+  escalationDelay: integer("escalation_delay").notNull().default(300), // seconds
+  autoResolveDelay: integer("auto_resolve_delay").notNull().default(1800), // seconds
+  // Target audience
+  targetRoles: jsonb("target_roles").notNull().default(["trader"]), // roles to apply this policy to
+  targetDesks: jsonb("target_desks").notNull().default([]), // desk IDs to apply this policy to
+  // Active status
+  isActive: boolean("is_active").notNull().default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Alert delivery channels configuration
+export const alertChannels = pgTable("alert_channels", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  alertPolicyId: varchar("alert_policy_id").notNull().references(() => alertPolicies.id),
+  channelType: text("channel_type").notNull(), // email, sms, webhook, dashboard, websocket
+  severity: text("severity").notNull(), // warning, urgent, critical
+  // Channel configuration
+  recipients: jsonb("recipients").notNull().default([]), // email addresses, phone numbers, webhook URLs
+  template: text("template"), // message template
+  enabled: boolean("enabled").notNull().default(true),
+  // Rate limiting
+  maxFrequency: integer("max_frequency").notNull().default(5), // max alerts per hour
+  cooldownMinutes: integer("cooldown_minutes").notNull().default(15), // minutes between same alert type
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+// Alert history for tracking and analytics
+export const alertHistory = pgTable("alert_history", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  alertPolicyId: varchar("alert_policy_id").notNull().references(() => alertPolicies.id),
+  userId: varchar("user_id").notNull().references(() => users.id),
+  assessmentId: varchar("assessment_id").references(() => assessments.id),
+  // Alert details
+  alertType: text("alert_type").notNull(), // stress_spike, threshold_breach, pattern_anomaly
+  severity: text("severity").notNull(), // warning, urgent, critical
+  message: text("message").notNull(),
+  stressLevel: real("stress_level").notNull(),
+  triggerThreshold: integer("trigger_threshold").notNull(),
+  // Metadata
+  metadata: jsonb("metadata").notNull().default({}), // context data, trading activity, etc.
+  // Delivery tracking
+  channelsTriggered: jsonb("channels_triggered").notNull().default([]), // which channels fired
+  deliveryStatus: jsonb("delivery_status").notNull().default({}), // success/failure per channel
+  // Resolution tracking
+  resolved: boolean("resolved").notNull().default(false),
+  resolvedAt: timestamp("resolved_at"),
+  resolvedBy: varchar("resolved_by").references(() => users.id),
+  resolutionNote: text("resolution_note"),
+  autoResolved: boolean("auto_resolved").notNull().default(false),
+  // Response tracking
+  responseTime: integer("response_time"), // seconds from alert to resolution
+  escalated: boolean("escalated").notNull().default(false),
+  escalatedAt: timestamp("escalated_at"),
+  // Timestamps
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
 // Relations
 export const usersRelations = relations(users, ({ many }) => ({
   assessments: many(assessments),
   baselines: many(userBaselines),
   auditLogs: many(auditLogs),
+  alertHistory: many(alertHistory),
 }));
 
 export const policiesRelations = relations(policies, ({ many }) => ({
@@ -142,10 +213,27 @@ export const assessmentsRelations = relations(assessments, ({ one, many }) => ({
   user: one(users, { fields: [assessments.userId], references: [users.id] }),
   policy: one(policies, { fields: [assessments.policyId], references: [policies.id] }),
   auditLogs: many(auditLogs),
+  alertHistory: many(alertHistory),
 }));
 
 export const userBaselinesRelations = relations(userBaselines, ({ one }) => ({
   user: one(users, { fields: [userBaselines.userId], references: [users.id] }),
+}));
+
+export const alertPoliciesRelations = relations(alertPolicies, ({ many }) => ({
+  channels: many(alertChannels),
+  history: many(alertHistory),
+}));
+
+export const alertChannelsRelations = relations(alertChannels, ({ one }) => ({
+  alertPolicy: one(alertPolicies, { fields: [alertChannels.alertPolicyId], references: [alertPolicies.id] }),
+}));
+
+export const alertHistoryRelations = relations(alertHistory, ({ one }) => ({
+  alertPolicy: one(alertPolicies, { fields: [alertHistory.alertPolicyId], references: [alertPolicies.id] }),
+  user: one(users, { fields: [alertHistory.userId], references: [users.id] }),
+  assessment: one(assessments, { fields: [alertHistory.assessmentId], references: [assessments.id] }),
+  resolvedByUser: one(users, { fields: [alertHistory.resolvedBy], references: [users.id] }),
 }));
 
 // Zod schemas
@@ -155,6 +243,9 @@ export const insertAssessmentSchema = createInsertSchema(assessments).omit({ id:
 export const insertBaselineSchema = createInsertSchema(userBaselines).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertAuditLogSchema = createInsertSchema(auditLogs).omit({ id: true, timestamp: true });
 export const insertEventSchema = createInsertSchema(realTimeEvents).omit({ id: true, createdAt: true });
+export const insertAlertPolicySchema = createInsertSchema(alertPolicies).omit({ id: true, createdAt: true, updatedAt: true });
+export const insertAlertChannelSchema = createInsertSchema(alertChannels).omit({ id: true, createdAt: true });
+export const insertAlertHistorySchema = createInsertSchema(alertHistory).omit({ id: true, createdAt: true });
 
 // Types
 export type User = typeof users.$inferSelect;
@@ -170,3 +261,9 @@ export type InsertAuditLog = z.infer<typeof insertAuditLogSchema>;
 export type RealTimeEvent = typeof realTimeEvents.$inferSelect;
 export type InsertRealTimeEvent = z.infer<typeof insertEventSchema>;
 export type TradingDesk = typeof tradingDesks.$inferSelect;
+export type AlertPolicy = typeof alertPolicies.$inferSelect;
+export type InsertAlertPolicy = z.infer<typeof insertAlertPolicySchema>;
+export type AlertChannel = typeof alertChannels.$inferSelect;
+export type InsertAlertChannel = z.infer<typeof insertAlertChannelSchema>;
+export type AlertHistory = typeof alertHistory.$inferSelect;
+export type InsertAlertHistory = z.infer<typeof insertAlertHistorySchema>;
