@@ -71,12 +71,13 @@ export class RiskScoringService {
       componentCount++;
     }
 
-    // Predictive stress analysis (if available)
+    // Predictive stress analysis (disabled - needs real ML models and data pipeline)
     const predictiveRisk = this.analyzePredictiveStressIndicators(signals);
     if (predictiveRisk.score > 0) {
-      totalRisk += predictiveRisk.score * 0.4; // 40% weight - predictive insights are valuable for forward-looking risk
-      confidence += predictiveRisk.confidence * 0.4;
-      componentCount++;
+      // DISABLED: totalRisk += predictiveRisk.score * 0.0; // 0% weight - disabled until real ML implementation
+      // DISABLED: confidence += predictiveRisk.confidence * 0.0;
+      // DISABLED: componentCount++;
+      console.log(`🔮 Predictive analysis available but disabled (score: ${predictiveRisk.score})`);
     }
 
     // Contextual risk factors - additive, not multiplicative

@@ -1,6 +1,7 @@
 import { storage } from "../storage";
 import { RiskScoringService } from "./riskScoring";
 import { PredictiveStressIndicatorsService } from "./predictiveStressIndicators";
+import { IntelligentInterventionsService } from "./intelligentInterventions";
 import type { Assessment, InsertAssessment, Policy, UserBaseline } from "@shared/schema";
 
 export interface OrderContext {
@@ -66,15 +67,43 @@ export interface AssessmentResult {
   confidence: number;
   recommendedAction: string;
   cooldownDuration?: number;
+  // Intelligent intervention recommendations
+  interventionRecommendations?: {
+    immediate: Array<{
+      title: string;
+      description: string;
+      duration: number;
+      category: string;
+    }>;
+    shortTerm: Array<{
+      title: string;
+      description: string;
+      duration: number;
+      category: string;
+    }>;
+    longTerm: Array<{
+      title: string;
+      description: string;
+      duration: number;
+      category: string;
+    }>;
+    quickSuggestions: string[];
+    triggerAnalysis?: {
+      primaryTriggers: string[];
+      patterns: string[];
+    };
+  };
 }
 
 export class EmotionGuardService {
   private riskScoring: RiskScoringService;
   private predictiveStressIndicators: PredictiveStressIndicatorsService;
+  private intelligentInterventions: IntelligentInterventionsService;
 
   constructor() {
     this.riskScoring = new RiskScoringService();
     this.predictiveStressIndicators = new PredictiveStressIndicatorsService(storage);
+    this.intelligentInterventions = new IntelligentInterventionsService(storage);
   }
 
   async checkBeforeTrade(
@@ -223,6 +252,62 @@ export class EmotionGuardService {
       })
     ]);
 
+    // Generate intelligent intervention recommendations
+    let interventionRecommendations = undefined;
+    try {
+      const interventionPlan = await this.intelligentInterventions.generatePersonalizedPlan(
+        userId,
+        assessment,
+        signals,
+        baseline
+      );
+
+      interventionRecommendations = {
+        immediate: interventionPlan.immediateRecommendations.map(rec => ({
+          title: rec.title,
+          description: rec.description,
+          duration: rec.estimatedDuration,
+          category: rec.category
+        })),
+        shortTerm: interventionPlan.shortTermStrategies.map(rec => ({
+          title: rec.title,
+          description: rec.description,
+          duration: rec.estimatedDuration,
+          category: rec.category
+        })),
+        longTerm: interventionPlan.longTermDevelopment.map(rec => ({
+          title: rec.title,
+          description: rec.description,
+          duration: rec.estimatedDuration,
+          category: rec.category
+        })),
+        quickSuggestions: this.intelligentInterventions.getQuickInterventions(
+          assessment.selfReportStress || 5
+        ),
+        triggerAnalysis: {
+          primaryTriggers: interventionPlan.triggerAnalysis.primaryTriggers,
+          patterns: interventionPlan.triggerAnalysis.historicalPatterns
+        }
+      };
+
+      console.log(`🎯 Generated intervention plan for ${userId}: ${interventionRecommendations.immediate.length} immediate, ${interventionRecommendations.shortTerm.length} short-term, ${interventionRecommendations.longTerm.length} long-term recommendations`);
+    } catch (error) {
+      console.error('Intervention generation failed (non-critical):', error);
+      // Fallback to simple quick suggestions
+      interventionRecommendations = {
+        immediate: [],
+        shortTerm: [],
+        longTerm: [],
+        quickSuggestions: this.intelligentInterventions.getQuickInterventions(
+          assessment.selfReportStress || 5
+        ),
+        triggerAnalysis: {
+          primaryTriggers: [],
+          patterns: []
+        }
+      };
+    }
+
     return {
       assessmentId: assessment.id,
       riskScore: riskResult.riskScore,
@@ -231,6 +316,7 @@ export class EmotionGuardService {
       confidence: riskResult.confidence,
       recommendedAction: this.getRecommendedAction(verdict, riskResult.riskScore),
       cooldownDuration: verdict === 'hold' ? policy.cooldownDuration : undefined,
+      interventionRecommendations,
     };
   }
 
