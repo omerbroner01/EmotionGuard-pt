@@ -1,5 +1,6 @@
 import { storage } from "../storage";
 import { RiskScoringService } from "./riskScoring";
+import { PredictiveStressIndicatorsService } from "./predictiveStressIndicators";
 import type { Assessment, InsertAssessment, Policy, UserBaseline } from "@shared/schema";
 
 export interface OrderContext {
@@ -69,9 +70,11 @@ export interface AssessmentResult {
 
 export class EmotionGuardService {
   private riskScoring: RiskScoringService;
+  private predictiveStressIndicators: PredictiveStressIndicatorsService;
 
   constructor() {
     this.riskScoring = new RiskScoringService();
+    this.predictiveStressIndicators = new PredictiveStressIndicatorsService(storage);
   }
 
   async checkBeforeTrade(
@@ -85,6 +88,58 @@ export class EmotionGuardService {
       storage.getUserBaseline(userId),
       storage.getDefaultPolicy() // In production, this would be user/desk-specific
     ]);
+
+    // Generate predictive stress analysis
+    let stressPrediction = null;
+    if (!fastMode && signals.mouseMovements && signals.keystrokeTimings) {
+      try {
+        const biometricData = {
+          mouseMovements: signals.mouseMovements.map((velocity, index) => ({
+            x: Math.random() * 1000, // Mock coordinates
+            y: Math.random() * 800,
+            timestamp: Date.now() + index * 100,
+            velocity: velocity,
+            acceleration: velocity > 0 ? velocity * 0.1 : 0
+          })),
+          keystrokeRhythm: signals.keystrokeTimings?.map((timing, index) => ({
+            key: String.fromCharCode(65 + (index % 26)),
+            pressTime: timing,
+            releaseTime: timing + 50,
+            dwellTime: 50,
+            flightTime: index > 0 ? timing - (signals.keystrokeTimings?.[index - 1] || 0) : 0
+          })) || [],
+          facialMetrics: signals.facialMetrics ? [{
+            timestamp: Date.now(),
+            eyeBlinkRate: signals.facialMetrics.eyeBlinkRate || 15,
+            browFurrowing: signals.facialMetrics.browFurrowing || 0.3,
+            jawTension: signals.facialMetrics.jawTension || 0.2,
+            headStability: signals.facialMetrics.headStability || 0.8
+          }] : [],
+          cognitiveLoad: signals.stroopTrials ? [{
+            timestamp: Date.now(),
+            reactionTime: signals.stroopTrials.reduce((avg, trial) => avg + trial.reactionTimeMs, 0) / signals.stroopTrials.length,
+            accuracy: signals.stroopTrials.filter(trial => trial.correct).length / signals.stroopTrials.length,
+            responseVariability: this.calculateResponseVariability(signals.stroopTrials)
+          }] : []
+        };
+
+        stressPrediction = await this.predictiveStressIndicators.predictStressLevel(
+          userId,
+          biometricData,
+          {
+            timeOfDay: orderContext.timeOfDay,
+            marketConditions: orderContext.marketVolatility && orderContext.marketVolatility > 0.7 ? 'high_volatility' : 'normal',
+            recentTradingActivity: orderContext.recentLosses && orderContext.recentLosses > 2 ? 'recent_losses' : 'normal',
+            currentPortfolioStatus: orderContext.currentPnL && orderContext.currentPnL < 0 ? 'negative_pnl' : 'positive_pnl'
+          }
+        );
+
+        console.log(`🔮 Stress prediction for ${userId}: ${stressPrediction.predictedStressLevel}/10 (confidence: ${stressPrediction.confidence})`);
+      } catch (error) {
+        console.error('Predictive stress analysis failed:', error);
+        // Continue with normal assessment flow
+      }
+    }
 
     // Create assessment record
     const assessment = await storage.createAssessment({
@@ -111,8 +166,20 @@ export class EmotionGuardService {
     });
 
     // Calculate risk score with intelligent pattern analysis
+    // Enhance signals with predictive stress insights
+    const enhancedSignals = {
+      ...signals,
+      predictiveStressData: stressPrediction ? {
+        predictedStressLevel: stressPrediction.predictedStressLevel,
+        confidence: stressPrediction.confidence,
+        timeToOnset: stressPrediction.timeToOnset,
+        riskFactors: stressPrediction.riskFactors,
+        earlyWarningSignals: stressPrediction.earlyWarningSignals
+      } : null
+    };
+
     const riskResult = await this.riskScoring.calculateRiskScore(
-      signals,
+      enhancedSignals,
       baseline,
       orderContext,
       policy,
@@ -428,5 +495,22 @@ export class EmotionGuardService {
       default:
         return 'Assessment completed';
     }
+  }
+
+  private calculateResponseVariability(stroopTrials: Array<{
+    word: string;
+    color: string;
+    response: string;
+    reactionTimeMs: number;
+    correct: boolean;
+  }>): number {
+    if (stroopTrials.length < 2) return 0;
+    
+    const reactionTimes = stroopTrials.map(trial => trial.reactionTimeMs);
+    const mean = reactionTimes.reduce((sum, time) => sum + time, 0) / reactionTimes.length;
+    const variance = reactionTimes.reduce((sum, time) => sum + Math.pow(time - mean, 2), 0) / reactionTimes.length;
+    
+    // Normalize variability to 0-1 scale (higher = more variable = more stress)
+    return Math.min(1, Math.sqrt(variance) / mean);
   }
 }

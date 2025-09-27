@@ -71,6 +71,14 @@ export class RiskScoringService {
       componentCount++;
     }
 
+    // Predictive stress analysis (if available)
+    const predictiveRisk = this.analyzePredictiveStressIndicators(signals);
+    if (predictiveRisk.score > 0) {
+      totalRisk += predictiveRisk.score * 0.4; // 40% weight - predictive insights are valuable for forward-looking risk
+      confidence += predictiveRisk.confidence * 0.4;
+      componentCount++;
+    }
+
     // Contextual risk factors - additive, not multiplicative
     const contextualRisk = this.analyzeContextualFactors(orderContext);
     totalRisk += contextualRisk; // Direct addition for contextual factors
@@ -451,6 +459,94 @@ export class RiskScoringService {
     }
 
     return { score: 0, confidence: 0, stressDetected: false };
+  }
+
+  private analyzePredictiveStressIndicators(signals: AssessmentSignals & { 
+    predictiveStressData?: {
+      predictedStressLevel: number;
+      confidence: number;
+      timeToOnset: number;
+      riskFactors: Array<{
+        factor: string;
+        contribution: number;
+        trend: 'increasing' | 'decreasing' | 'stable';
+      }>;
+      earlyWarningSignals: string[];
+    } | null;
+  }): {
+    score: number;
+    confidence: number;
+    stressDetected: boolean;
+  } {
+    if (!signals.predictiveStressData) {
+      return { score: 0, confidence: 0, stressDetected: false };
+    }
+
+    const predictiveData = signals.predictiveStressData;
+    let riskScore = 0;
+    let stressDetected = false;
+
+    // Predicted stress level risk scoring
+    if (predictiveData.predictedStressLevel >= 8) {
+      riskScore += 25; // Very high predicted stress
+      stressDetected = true;
+    } else if (predictiveData.predictedStressLevel >= 6) {
+      riskScore += 15; // High predicted stress
+      stressDetected = true;
+    } else if (predictiveData.predictedStressLevel >= 4) {
+      riskScore += 8; // Moderate predicted stress
+    }
+
+    // Time to onset risk scoring - closer onset = higher risk
+    if (predictiveData.timeToOnset <= 2) {
+      riskScore += 15; // Stress onset imminent (≤2 minutes)
+      stressDetected = true;
+    } else if (predictiveData.timeToOnset <= 5) {
+      riskScore += 10; // Stress onset soon (≤5 minutes)
+      stressDetected = true;
+    } else if (predictiveData.timeToOnset <= 10) {
+      riskScore += 5; // Stress onset within 10 minutes
+    }
+
+    // Risk factors contribution
+    const totalRiskFactorContribution = predictiveData.riskFactors.reduce(
+      (sum, factor) => sum + factor.contribution, 0
+    );
+    if (totalRiskFactorContribution > 0.7) {
+      riskScore += 12; // High cumulative risk factors
+      stressDetected = true;
+    } else if (totalRiskFactorContribution > 0.4) {
+      riskScore += 6; // Moderate cumulative risk factors
+    }
+
+    // Early warning signals count
+    const warningCount = predictiveData.earlyWarningSignals.length;
+    if (warningCount >= 3) {
+      riskScore += 10; // Multiple warning signals
+      stressDetected = true;
+    } else if (warningCount >= 2) {
+      riskScore += 6; // Some warning signals
+      stressDetected = true;
+    } else if (warningCount >= 1) {
+      riskScore += 3; // Few warning signals
+    }
+
+    // Increasing trend risk factors get additional weight
+    const increasingTrends = predictiveData.riskFactors.filter(
+      factor => factor.trend === 'increasing'
+    ).length;
+    if (increasingTrends >= 2) {
+      riskScore += 8; // Multiple escalating risk factors
+      stressDetected = true;
+    }
+
+    console.log(`🔮 Predictive stress risk analysis: score=${riskScore}, predicted=${predictiveData.predictedStressLevel}, confidence=${predictiveData.confidence}`);
+
+    return {
+      score: Math.min(30, riskScore), // Cap at 30 points for predictive component
+      confidence: predictiveData.confidence, // Use ML model confidence
+      stressDetected,
+    };
   }
 
   private analyzeContextualFactors(orderContext?: OrderContext): number {
