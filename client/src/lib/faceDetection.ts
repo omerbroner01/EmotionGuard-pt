@@ -50,27 +50,35 @@ export class FaceDetectionService {
   private fallbackInterval?: NodeJS.Timeout;
 
   async initialize(): Promise<void> {
-    console.log('Starting face detection initialization...');
+    console.log('🚀 Starting optimized face detection initialization...');
+    
+    // Performance optimization: Use race condition with fast fallback for B2B demos
+    const initTimeout = new Promise((_, reject) => {
+      setTimeout(() => reject(new Error('Face detection init timeout')), 2000); // 2s max for camera
+    });
     
     try {
-      // Step 1: Request camera permissions first
-      console.log('Requesting camera access...');
+      // Step 1: Fast camera access with optimization
+      console.log('📷 Requesting camera access (optimized)...');
+      
+      const cameraPromise = navigator.mediaDevices.getUserMedia({ 
+        video: { 
+          width: 320, // Reduced resolution for faster processing
+          height: 240,
+          facingMode: 'user',
+          frameRate: { ideal: 15, max: 30 } // Lower framerate for better performance
+        },
+        audio: false
+      });
+      
       let stream: MediaStream;
       try {
-        stream = await navigator.mediaDevices.getUserMedia({ 
-          video: { 
-            width: 640, 
-            height: 480,
-            facingMode: 'user'
-          },
-          audio: false
-        });
-        console.log('✓ Camera access granted');
+        stream = await Promise.race([cameraPromise, initTimeout]);
+        console.log('✅ Camera access granted (fast mode)');
       } catch (cameraError: any) {
-        console.warn('✗ Camera access failed:', cameraError);
-        console.log('Switching to fallback mode (simulated facial metrics for testing)');
+        console.warn('⚠️ Camera access failed or timeout - using fallback mode for demo continuity');
         this.fallbackMode = true;
-        console.log('✓ Fallback mode initialized - will provide simulated facial metrics');
+        console.log('✅ Fallback mode active - simulated facial metrics for seamless demo');
         return; // Skip MediaPipe initialization in fallback mode
       }
 

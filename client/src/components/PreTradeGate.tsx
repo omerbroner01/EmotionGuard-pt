@@ -59,29 +59,46 @@ export function PreTradeGate({
   
   // All emotion guard functionality now comes from props
 
-  // Quick check simulation
+  // Enhanced quick check with realistic timing and progress feedback
   useEffect(() => {
     if (currentPhase === 'quickCheck') {
-      const interval = setInterval(() => {
-        setQuickCheckProgress(prev => {
-          const newProgress = prev + 20;
-          if (newProgress >= 100) {
-            clearInterval(interval);
-            // Decide next phase based on quick check results
+      console.log('⏱️ Starting optimized quick check...');
+      
+      // Faster progress updates for B2B demo (target ≤1.5s)
+      const progressSteps = [
+        { progress: 20, message: 'Initializing biometric sensors...', delay: 200 },
+        { progress: 50, message: 'Analyzing behavioral patterns...', delay: 300 },
+        { progress: 80, message: 'Processing facial metrics...', delay: 400 },
+        { progress: 100, message: 'Assessment complete', delay: 200 }
+      ];
+      
+      let stepIndex = 0;
+      const runNextStep = () => {
+        if (stepIndex < progressSteps.length) {
+          const step = progressSteps[stepIndex];
+          setQuickCheckProgress(step.progress);
+          console.log(`📊 Progress: ${step.progress}% - ${step.message}`);
+          
+          stepIndex++;
+          if (stepIndex < progressSteps.length) {
+            setTimeout(runNextStep, step.delay);
+          } else {
+            // Complete quick check and advance
             setTimeout(() => {
               const needsDeepCheck = Math.random() > 0.6; // 40% chance for demo
               if (needsDeepCheck) {
+                console.log('🧠 Deep assessment needed - proceeding to Stroop test');
                 setCurrentPhase('stroopTest');
               } else {
                 setCurrentPhase('selfReport');
               }
             }, 500);
           }
-          return newProgress;
-        });
-      }, 300);
-
-      return () => clearInterval(interval);
+        };
+      };
+      
+      // Start the first step
+      runNextStep();
     }
   }, [currentPhase]);
 

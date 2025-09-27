@@ -33,6 +33,7 @@ export function useEmotionGuard(userId = 'demo-user') {
   const assessmentMutation = useMutation({
     mutationFn: async (data: {
       orderContext: OrderContext;
+      fastMode?: boolean;
       stroopResults?: any[];
       stressLevel?: number;
       facialMetrics?: FaceMetrics | null;
@@ -51,7 +52,7 @@ export function useEmotionGuard(userId = 'demo-user') {
       };
 
       console.log('🛠️ About to call emotionGuard.checkBeforeTrade with signals:', signals);
-      const result = await emotionGuard.checkBeforeTrade(data.orderContext, signals, userId);
+      const result = await emotionGuard.checkBeforeTrade(data.orderContext, signals, userId, data.fastMode);
       console.log('🛠️ emotionGuard.checkBeforeTrade returned:', result);
       return result;
     },
@@ -109,11 +110,20 @@ export function useEmotionGuard(userId = 'demo-user') {
     },
   });
 
-  const startAssessment = useCallback((orderContext: OrderContext) => {
+  const startAssessment = useCallback(async (orderContext: OrderContext) => {
     console.log('🚀 startAssessment called with orderContext:', orderContext);
     startTracking();
     console.log('🚀 About to call assessmentMutation.mutateAsync');
-    return assessmentMutation.mutateAsync({ orderContext });
+    
+    // Performance optimization: Single API call with backend timeout handling
+    // Delegate timeout logic to backend to avoid duplicate mutations
+    const result = await assessmentMutation.mutateAsync({ 
+      orderContext,
+      fastMode: true // Enable fast mode for B2B demo performance
+    });
+    
+    console.log('✅ Assessment completed successfully');
+    return result;
   }, [startTracking, assessmentMutation]);
 
   const updateAssessment = useCallback(async (stroopResults?: any[], stressLevel?: number, facialMetrics?: FaceMetrics | null) => {

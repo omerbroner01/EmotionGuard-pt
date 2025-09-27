@@ -19,12 +19,14 @@ export class EmotionGuardSDK {
   async checkBeforeTrade(
     orderContext: OrderContext,
     signals: AssessmentSignals,
-    userId?: string
+    userId?: string,
+    fastMode?: boolean
   ): Promise<AssessmentResult> {
     const response = await apiRequest('POST', '/api/emotion-guard/check-trade', {
       userId,
       orderContext,
       signals,
+      fastMode,
     });
 
     return response.json();

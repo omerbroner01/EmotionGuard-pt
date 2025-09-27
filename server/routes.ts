@@ -19,6 +19,7 @@ const checkTradeSchema = z.object({
     timeOfDay: z.string(),
     marketVolatility: z.number().optional(),
   }),
+  fastMode: z.boolean().optional(),
   signals: z.object({
     mouseMovements: z.array(z.number()).optional(),
     keystrokeTimings: z.array(z.number()).optional(),
@@ -141,9 +142,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post('/api/emotion-guard/check-trade', async (req, res) => {
     try {
       const userId = req.body.userId || 'demo-user'; // In production, get from auth
-      const { orderContext, signals } = checkTradeSchema.parse(req.body);
+      const { orderContext, signals, fastMode = false } = checkTradeSchema.parse(req.body);
       
-      const result = await emotionGuard.checkBeforeTrade(userId, orderContext, signals);
+      const result = await emotionGuard.checkBeforeTrade(userId, orderContext, signals, fastMode);
       
       // Broadcast real-time event
       broadcastEvent({

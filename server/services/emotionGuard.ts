@@ -77,7 +77,8 @@ export class EmotionGuardService {
   async checkBeforeTrade(
     userId: string,
     orderContext: OrderContext,
-    signals: AssessmentSignals
+    signals: AssessmentSignals,
+    fastMode = false
   ): Promise<AssessmentResult> {
     // Get user baseline and policy
     const [baseline, policy] = await Promise.all([
