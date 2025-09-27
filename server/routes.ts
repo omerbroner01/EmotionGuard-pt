@@ -3,6 +3,7 @@ import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { EmotionGuardService } from "./services/emotionGuard";
 import { NLPAnalysisService } from "./services/nlpAnalysis";
+import { AdaptiveBaselineLearningService } from "./services/adaptiveBaselineLearning";
 import { WebSocketServer, WebSocket } from "ws";
 import { z } from "zod";
 
@@ -111,6 +112,7 @@ const policyUpdateSchema = z.object({
 export async function registerRoutes(app: Express): Promise<Server> {
   const emotionGuard = new EmotionGuardService();
   const nlpAnalysis = new NLPAnalysisService();
+  const adaptiveLearning = new AdaptiveBaselineLearningService();
   
   const httpServer = createServer(app);
   
@@ -278,6 +280,46 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.error('Baseline creation failed:', error);
       res.status(400).json({ 
         message: error instanceof Error ? error.message : 'Baseline creation failed' 
+      });
+    }
+  });
+
+  // Adaptive baseline learning endpoints
+  app.get('/api/baselines/:userId/optimization-analysis', async (req, res) => {
+    try {
+      const userId = req.params.userId;
+      const optimization = await adaptiveLearning.analyzeAndOptimizeBaseline(userId);
+      
+      res.json(optimization);
+    } catch (error) {
+      console.error('Baseline optimization analysis failed:', error);
+      res.status(500).json({ 
+        message: error instanceof Error ? error.message : 'Optimization analysis failed' 
+      });
+    }
+  });
+
+  app.post('/api/baselines/:userId/adaptive-update', async (req, res) => {
+    try {
+      const userId = req.params.userId;
+      const updatedBaseline = await adaptiveLearning.updateBaselineFromLearning(userId);
+      
+      if (updatedBaseline) {
+        res.json({ 
+          success: true, 
+          baseline: updatedBaseline,
+          message: 'Baseline updated based on performance learning'
+        });
+      } else {
+        res.json({ 
+          success: false, 
+          message: 'No baseline update needed - insufficient confidence or improvement potential'
+        });
+      }
+    } catch (error) {
+      console.error('Adaptive baseline update failed:', error);
+      res.status(500).json({ 
+        message: error instanceof Error ? error.message : 'Adaptive baseline update failed' 
       });
     }
   });
