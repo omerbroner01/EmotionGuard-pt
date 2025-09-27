@@ -210,6 +210,167 @@ export class AIScoringService {
   }
 
   /**
+   * Assess quality of biometric signals for confidence scoring
+   */
+  private assessBiometricQuality(bio: BiometricPattern): number {
+    let quality = 0;
+    
+    // Mouse stability quality - penalize erratic movements
+    if (bio.mouseStability > 0.7) quality += 0.3;
+    else if (bio.mouseStability > 0.4) quality += 0.15;
+    
+    // Keystroke rhythm consistency - stable rhythms indicate good signal
+    if (bio.keystrokeRhythm > 0.6) quality += 0.25;
+    else if (bio.keystrokeRhythm > 0.3) quality += 0.1;
+    
+    // Velocity variance assessment - extreme variance indicates poor signal quality
+    if (bio.velocityVariance < 0.3) quality += 0.25; // Good consistency
+    else if (bio.velocityVariance > 0.8) quality -= 0.1; // Poor quality penalty
+    
+    // Micro-tremor detection confidence - clear signals preferred
+    if (bio.microTremors < 0.1 || bio.microTremors > 0.3) quality += 0.2; // Clear signal (low or significant tremors)
+    
+    return Math.max(0, Math.min(1, quality));
+  }
+
+  /**
+   * Assess quality of cognitive performance data with robust error handling
+   */
+  private assessCognitiveQuality(cog: CognitiveProfile, cognitiveAnalytics?: any): number {
+    let quality = 0;
+    
+    // Basic cognitive profile quality (always available)
+    if (cog && typeof cog.accuracy === 'number') {
+      if (cog.accuracy > 0.8) quality += 0.2;
+      else if (cog.accuracy > 0.6) quality += 0.1;
+    }
+    
+    if (cog && typeof cog.consistency === 'number' && cog.consistency > 0.7) quality += 0.15;
+    if (cog && typeof cog.attentionStability === 'number' && cog.attentionStability > 0.6) quality += 0.15;
+    
+    // Enhanced cognitive analytics quality (gracefully handle missing/malformed data)
+    if (cognitiveAnalytics && typeof cognitiveAnalytics === 'object') {
+      try {
+        // Rich data indicates higher quality assessment
+        quality += 0.2; // Bonus for having advanced analytics
+        
+        // Overall cognitive score reliability (safe access)
+        if (typeof cognitiveAnalytics.overallScore === 'number' && cognitiveAnalytics.overallScore > 0.7) {
+          quality += 0.1;
+        }
+        
+        // Attention metrics quality - safe access to nested objects
+        if (cognitiveAnalytics.attentionMetrics && 
+            typeof cognitiveAnalytics.attentionMetrics.focusLapses === 'number' &&
+            cognitiveAnalytics.attentionMetrics.focusLapses < 2) {
+          quality += 0.1;
+        }
+        
+        // Stress indicators coherence - safe access and validation
+        if (cognitiveAnalytics.stressIndicators &&
+            typeof cognitiveAnalytics.stressIndicators.errorRate === 'number' &&
+            typeof cognitiveAnalytics.stressIndicators.performanceDecline === 'number') {
+          const stressCoherence = 1 - Math.abs(
+            cognitiveAnalytics.stressIndicators.errorRate - 
+            cognitiveAnalytics.stressIndicators.performanceDecline
+          );
+          quality += Math.max(0, stressCoherence * 0.1);
+        }
+      } catch (error) {
+        console.warn('⚠️ Error processing cognitive analytics for quality assessment:', error);
+        // Continue with base quality - don't fail the entire assessment
+      }
+    }
+    
+    return Math.max(0, Math.min(1, quality));
+  }
+
+  /**
+   * Assess self-report reliability by comparing with objective signals
+   */
+  private assessSelfReportQuality(selfReport: number, bio: BiometricPattern, cog: CognitiveProfile): number {
+    let quality = 0.5; // Base quality for self-report
+    
+    // Cross-validate with biometric signals
+    const biometricStress = bio.microTremors + (1 - bio.mouseStability) + bio.velocityVariance;
+    const expectedStressFromBio = Math.min(10, biometricStress * 3);
+    
+    // Cross-validate with cognitive performance
+    const cognitiveStress = (1 - cog.accuracy) + (1 - cog.attentionStability);
+    const expectedStressFromCog = Math.min(10, cognitiveStress * 5);
+    
+    // Calculate coherence between self-report and objective measures
+    const avgObjectiveStress = (expectedStressFromBio + expectedStressFromCog) / 2;
+    const coherence = 1 - Math.abs(selfReport - avgObjectiveStress) / 10;
+    
+    // High coherence increases quality, low coherence decreases it
+    if (coherence > 0.7) quality += 0.3; // Good alignment
+    else if (coherence > 0.4) quality += 0.1; // Moderate alignment
+    else quality -= 0.2; // Poor alignment - potential over/under-reporting
+    
+    return Math.max(0, Math.min(1, quality));
+  }
+
+  /**
+   * Assess facial metrics signal quality
+   */
+  private assessFacialQuality(facial: any): number {
+    let quality = 0;
+    
+    if (facial.isPresent) quality += 0.4; // Basic presence
+    
+    // Blink rate within normal range indicates good signal
+    if (facial.blinkRate >= 12 && facial.blinkRate <= 20) quality += 0.2;
+    
+    // Clear stress indicators
+    if (facial.browFurrow > 0.3 || facial.jawOpenness < 0.3) quality += 0.2;
+    
+    // Gaze stability measurement quality
+    if (facial.gazeStability > 0.5) quality += 0.2;
+    
+    return Math.max(0, Math.min(1, quality));
+  }
+
+  /**
+   * Calculate multi-modal coherence bonus
+   */
+  private calculateMultiModalCoherence(
+    bio: BiometricPattern, 
+    cog: CognitiveProfile, 
+    selfReport: number | null,
+    facial: any
+  ): number {
+    const stressSignals: number[] = [];
+    
+    // Extract stress indicators from each modality
+    const biometricStress = bio.microTremors + (1 - bio.mouseStability);
+    stressSignals.push(Math.min(1, biometricStress));
+    
+    const cognitiveStress = (1 - cog.accuracy) + (1 - cog.attentionStability);
+    stressSignals.push(Math.min(1, cognitiveStress));
+    
+    if (selfReport !== null) {
+      stressSignals.push(selfReport / 10); // Normalize to 0-1
+    }
+    
+    if (facial?.isPresent) {
+      const facialStress = (facial.browFurrow || 0) + (1 - (facial.gazeStability || 1));
+      stressSignals.push(Math.min(1, facialStress));
+    }
+    
+    if (stressSignals.length < 2) return 0; // Need at least 2 signals for coherence
+    
+    // Calculate variance between signals - low variance = high coherence
+    const mean = stressSignals.reduce((sum, signal) => sum + signal, 0) / stressSignals.length;
+    const variance = stressSignals.reduce((sum, signal) => sum + Math.pow(signal - mean, 2), 0) / stressSignals.length;
+    
+    // Convert variance to coherence bonus (lower variance = higher coherence)
+    const coherence = Math.max(0, 1 - variance * 4); // Scale variance to 0-1 range
+    
+    return coherence;
+  }
+
+  /**
    * Perform AI analysis using OpenAI for pattern recognition and decision making
    */
   private async performAIAnalysis(
@@ -219,6 +380,9 @@ export class AIScoringService {
     baseline?: UserBaseline,
     orderContext?: OrderContext
   ): Promise<AIAnalysisResult> {
+    // Store original signals for fallback analysis
+    const originalSignals = signals;
+    
     // Prepare analysis context for AI
     const analysisContext = {
       biometric: {
@@ -233,6 +397,20 @@ export class AIScoringService {
         consistency: cognitive.consistency.toFixed(3),
         attentionStability: cognitive.attentionStability.toFixed(3)
       },
+      // Enhanced cognitive analytics from new assessment system (crash-proof)
+      cognitiveAnalytics: signals.cognitiveAnalytics ? {
+        overallScore: typeof signals.cognitiveAnalytics.overallScore === 'number' ? signals.cognitiveAnalytics.overallScore : 0.5,
+        reactionTimeMs: typeof signals.cognitiveAnalytics.reactionTimeMs === 'number' ? signals.cognitiveAnalytics.reactionTimeMs : 800,
+        attentionMetrics: {
+          focusLapses: typeof signals.cognitiveAnalytics.attentionMetrics?.focusLapses === 'number' ? signals.cognitiveAnalytics.attentionMetrics.focusLapses : 0,
+          vigilanceDecline: typeof signals.cognitiveAnalytics.attentionMetrics?.vigilanceDecline === 'number' ? signals.cognitiveAnalytics.attentionMetrics.vigilanceDecline : 0
+        },
+        stressIndicators: {
+          performanceDecline: typeof signals.cognitiveAnalytics.stressIndicators?.performanceDecline === 'number' ? signals.cognitiveAnalytics.stressIndicators.performanceDecline : 0,
+          errorRate: typeof signals.cognitiveAnalytics.stressIndicators?.errorRate === 'number' ? signals.cognitiveAnalytics.stressIndicators.errorRate : 0.5,
+          responseVariability: typeof signals.cognitiveAnalytics.stressIndicators?.responseVariability === 'number' ? signals.cognitiveAnalytics.stressIndicators.responseVariability : 0.3
+        }
+      } : null,
       selfReport: signals.stressLevel || null,
       facialMetrics: signals.facialMetrics ? {
         blinkRate: signals.facialMetrics.blinkRate || 15,
@@ -256,7 +434,7 @@ export class AIScoringService {
     if (this.openaiApiKey) {
       return await this.performOpenAIAnalysis(analysisContext);
     } else {
-      return this.performFallbackAnalysis(analysisContext, biometric, cognitive, signals);
+      return this.performFallbackAnalysis(analysisContext, biometric, cognitive, originalSignals);
     }
   }
 
@@ -320,7 +498,32 @@ export class AIScoringService {
 
     } catch (error) {
       console.error('🚫 OpenAI analysis failed, using fallback:', error);
-      return this.performFallbackAnalysis(context, null, null, null);
+      // Extract biometric and cognitive patterns from context for fallback
+      const fallbackBio = {
+        mouseStability: parseFloat(context.biometric?.mouseStability || '0.5'),
+        keystrokeRhythm: parseFloat(context.biometric?.keystrokeRhythm || '0.5'),
+        velocityVariance: parseFloat(context.biometric?.velocityVariance || '0.5'),
+        microTremors: parseFloat(context.biometric?.microTremors || '0.5')
+      };
+      const fallbackCog = {
+        reactionSpeed: parseFloat(context.cognitive?.reactionSpeed || '0.5'),
+        accuracy: parseFloat(context.cognitive?.accuracy || '0.5'),
+        consistency: parseFloat(context.cognitive?.consistency || '0.5'),
+        attentionStability: parseFloat(context.cognitive?.attentionStability || '0.5')
+      };
+      // Create proper signals object with numeric cognitive analytics (not serialized strings)
+      const fallbackSignals = {
+        cognitiveAnalytics: context.cognitiveAnalytics ? {
+          // Keep as numbers for proper quality assessment
+          overallScore: typeof context.cognitiveAnalytics.overallScore === 'number' ? context.cognitiveAnalytics.overallScore : 0.5,
+          reactionTimeMs: typeof context.cognitiveAnalytics.reactionTimeMs === 'number' ? context.cognitiveAnalytics.reactionTimeMs : 800,
+          attentionMetrics: context.cognitiveAnalytics.attentionMetrics || { focusLapses: 0, vigilanceDecline: 0 },
+          stressIndicators: context.cognitiveAnalytics.stressIndicators || { performanceDecline: 0, errorRate: 0.5, responseVariability: 0.3 }
+        } : null,
+        stressLevel: context.selfReport || null,
+        facialMetrics: context.facialMetrics || null
+      };
+      return this.performFallbackAnalysis(context, fallbackBio, fallbackCog, fallbackSignals as any);
     }
   }
 
@@ -418,7 +621,7 @@ export class AIScoringService {
         stressScore += 0.5;
         riskFactors.push('High leverage trading');
       }
-      if (order.riskAmount > 1000) {
+      if (order.orderSize > 1000 || order.size > 1000) {
         stressScore += 0.8;
         riskFactors.push('High risk amount');
       }
@@ -427,11 +630,36 @@ export class AIScoringService {
     // Calculate final stress level (0-10 scale)
     const finalStressLevel = Math.max(0, Math.min(10, stressScore));
 
-    // Calculate confidence based on signal quality
-    let confidence = 0.7; // Base confidence
-    if (bio.mouseStability > 0 || cog.accuracy > 0) confidence += 0.1;
-    if (selfReport) confidence += 0.15;
-    if (facial) confidence += 0.05;
+    // Enhanced multi-factor confidence scoring
+    let confidence = 0.3; // Conservative base confidence
+    
+    // Biometric signal quality assessment (not just availability)
+    if (bio.mouseStability > 0) {
+      const biometricQuality = this.assessBiometricQuality(bio);
+      confidence += biometricQuality * 0.25; // Up to 25% for high-quality biometrics
+    }
+    
+    // Cognitive performance signal quality (sophisticated assessment)
+    if (cog.accuracy > 0) {
+      const cognitiveQuality = this.assessCognitiveQuality(cog, signals?.cognitiveAnalytics);
+      confidence += cognitiveQuality * 0.3; // Up to 30% for high-quality cognitive data
+    }
+    
+    // Self-report reliability (consistent with other signals)
+    if (selfReport !== null) {
+      const selfReportQuality = this.assessSelfReportQuality(selfReport, bio, cog);
+      confidence += selfReportQuality * 0.2; // Up to 20% for coherent self-reporting
+    }
+    
+    // Facial metrics signal quality
+    if (facial) {
+      const facialQuality = this.assessFacialQuality(facial);
+      confidence += facialQuality * 0.15; // Up to 15% for high-quality facial data
+    }
+    
+    // Multi-modal coherence bonus - signals agreeing increases confidence
+    const coherenceBonus = this.calculateMultiModalCoherence(bio, cog, selfReport, facial);
+    confidence += coherenceBonus * 0.1; // Up to 10% bonus for coherent signals
     
     confidence = Math.max(0.3, Math.min(1.0, confidence));
 
