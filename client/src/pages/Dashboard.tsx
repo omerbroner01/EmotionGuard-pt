@@ -102,10 +102,12 @@ export default function Dashboard() {
                 <span>Admin Console</span>
               </div>
             </Link>
-            <a href="#" className="flex items-center space-x-3 text-muted-foreground hover:text-foreground px-3 py-2 rounded-md hover:bg-muted smooth-transition" data-testid="nav-analytics">
-              <span className="text-sm">📊</span>
-              <span>Analytics</span>
-            </a>
+            <Link href="/performance">
+              <div className="flex items-center space-x-3 text-muted-foreground hover:text-foreground px-3 py-2 rounded-md hover:bg-muted smooth-transition cursor-pointer" data-testid="nav-performance">
+                <span className="text-sm">📊</span>
+                <span>Performance Analytics</span>
+              </div>
+            </Link>
             <a href="#" className="flex items-center space-x-3 text-muted-foreground hover:text-foreground px-3 py-2 rounded-md hover:bg-muted smooth-transition" data-testid="nav-privacy">
               <span className="text-sm">🔒</span>
               <span>Privacy</span>
