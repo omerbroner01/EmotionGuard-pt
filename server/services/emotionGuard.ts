@@ -110,12 +110,13 @@ export class EmotionGuardService {
       reasonTags: [],
     });
 
-    // Calculate risk score
+    // Calculate risk score with intelligent pattern analysis
     const riskResult = await this.riskScoring.calculateRiskScore(
       signals,
       baseline,
       orderContext,
-      policy
+      policy,
+      userId  // Enable intelligent pattern recognition
     );
 
     // Determine verdict based on risk score and policy

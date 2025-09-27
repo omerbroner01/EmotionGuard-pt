@@ -1,5 +1,6 @@
 import type { AssessmentSignals, OrderContext } from "./emotionGuard";
 import type { Policy, UserBaseline } from "@shared/schema";
+import { IntelligentRiskPatternService } from "./intelligentRiskPatterns";
 
 export interface RiskScoringResult {
   riskScore: number; // 0-100
@@ -10,14 +11,21 @@ export interface RiskScoringResult {
   voiceStressDetected: boolean;
   facialStressDetected: boolean;
   contextualRisk: number;
+  // Enhanced AI pattern analysis
+  patternAdjustment?: number; // Risk adjustment from historical patterns
+  noveltyScore?: number; // How different behavior is from normal patterns
+  matchingPatternCount?: number; // Number of historical patterns matched
 }
 
 export class RiskScoringService {
+  private patternService = new IntelligentRiskPatternService();
+
   async calculateRiskScore(
     signals: AssessmentSignals,
     baseline?: UserBaseline,
     orderContext?: OrderContext,
-    policy?: Policy
+    policy?: Policy,
+    userId?: string
   ): Promise<RiskScoringResult> {
     let totalRisk = 0;
     let confidence = 0;
@@ -71,10 +79,11 @@ export class RiskScoringService {
     const normalizedConfidence = componentCount > 0 ? confidence / componentCount : 0;
 
     // Cap the total risk at 100
-    const finalRiskScore = Math.min(100, Math.max(0, totalRisk));
+    const baseRiskScore = Math.min(100, Math.max(0, totalRisk));
 
-    return {
-      riskScore: Math.round(finalRiskScore),
+    // Create initial result for pattern analysis
+    const baseResult: RiskScoringResult = {
+      riskScore: Math.round(baseRiskScore),
       confidence: normalizedConfidence,
       reactionTimeElevated: cognitiveRisk.reactionTimeElevated,
       accuracyLow: cognitiveRisk.accuracyLow,
@@ -83,6 +92,40 @@ export class RiskScoringService {
       facialStressDetected: facialRisk.stressDetected,
       contextualRisk: contextualRisk,
     };
+
+    // Apply intelligent pattern analysis if userId available
+    if (userId && orderContext) {
+      try {
+        const patternPrediction = await this.patternService.analyzePatternsForUser(
+          userId,
+          signals,
+          orderContext,
+          baseResult
+        );
+
+        // Apply pattern-based risk adjustment
+        const adjustedRiskScore = Math.min(100, Math.max(0, 
+          baseRiskScore + patternPrediction.predictedRiskAdjustment
+        ));
+
+        // Enhance confidence with pattern confidence
+        const enhancedConfidence = normalizedConfidence * 0.7 + patternPrediction.confidence * 0.3;
+
+        return {
+          ...baseResult,
+          riskScore: Math.round(adjustedRiskScore),
+          confidence: enhancedConfidence,
+          patternAdjustment: patternPrediction.predictedRiskAdjustment,
+          noveltyScore: patternPrediction.noveltyScore,
+          matchingPatternCount: patternPrediction.matchingPatterns.length,
+        };
+      } catch (error) {
+        console.error('Pattern analysis failed, using base scoring:', error);
+        // Fall back to base scoring if pattern analysis fails
+      }
+    }
+
+    return baseResult;
   }
 
   private analyzeCognitivePerformance(
