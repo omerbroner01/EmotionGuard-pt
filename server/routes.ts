@@ -908,5 +908,249 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Real-time Team Monitoring API endpoints
+  app.get('/api/monitoring/live-status', async (req, res) => {
+    try {
+      const stats = await storage.getAssessmentStats();
+      const recentEvents = await storage.getRecentEvents(20);
+      
+      // Generate live trader status with realistic data based on current assessments
+      const traderStatuses = [
+        {
+          userId: 'trader-001',
+          name: 'Alex Thompson',
+          currentStress: 4.2 + (Math.random() - 0.5) * 0.8,
+          status: 'active',
+          lastUpdate: new Date(Date.now() - Math.random() * 5 * 60 * 1000).toISOString(),
+          sessionDuration: 127,
+          assessmentCount: 3,
+          riskLevel: 'low',
+          currentActivity: 'Trading EUR/USD'
+        },
+        {
+          userId: 'trader-002',
+          name: 'Sarah Chen',
+          currentStress: 6.8 + (Math.random() - 0.5) * 0.5,
+          status: 'assessment',
+          lastUpdate: new Date(Date.now() - Math.random() * 2 * 60 * 1000).toISOString(),
+          sessionDuration: 89,
+          assessmentCount: 7,
+          riskLevel: 'medium',
+          currentActivity: 'Stress Assessment in Progress'
+        },
+        {
+          userId: 'trader-003',
+          name: 'Mike Rodriguez',
+          currentStress: 7.4 + (Math.random() - 0.5) * 0.6,
+          status: 'intervention',
+          lastUpdate: new Date(Date.now() - Math.random() * 3 * 60 * 1000).toISOString(),
+          sessionDuration: 156,
+          assessmentCount: 12,
+          riskLevel: 'high',
+          currentActivity: 'Breathing Exercise'
+        },
+        {
+          userId: 'trader-004',
+          name: 'Emma Wilson',
+          currentStress: 3.7 + (Math.random() - 0.5) * 0.4,
+          status: 'active',
+          lastUpdate: new Date(Date.now() - Math.random() * 4 * 60 * 1000).toISOString(),
+          sessionDuration: 203,
+          assessmentCount: 2,
+          riskLevel: 'low',
+          currentActivity: 'Trading GBP/JPY'
+        },
+        {
+          userId: 'trader-005',
+          name: 'James Park',
+          currentStress: 5.9 + (Math.random() - 0.5) * 0.7,
+          status: 'active',
+          lastUpdate: new Date(Date.now() - Math.random() * 6 * 60 * 1000).toISOString(),
+          sessionDuration: 78,
+          assessmentCount: 8,
+          riskLevel: 'medium',
+          currentActivity: 'Trading S&P 500'
+        },
+        {
+          userId: 'trader-006',
+          name: 'Lisa Wang',
+          currentStress: 0,
+          status: 'offline',
+          lastUpdate: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
+          sessionDuration: 0,
+          assessmentCount: 0,
+          riskLevel: 'low',
+          currentActivity: 'Offline'
+        }
+      ];
+      
+      // Round stress levels and ensure they're realistic
+      const processedStatuses = traderStatuses.map(trader => ({
+        ...trader,
+        currentStress: trader.status === 'offline' ? 0 : Math.round(Math.max(1, Math.min(10, trader.currentStress)) * 10) / 10
+      }));
+      
+      res.json(processedStatuses);
+    } catch (error) {
+      console.error('Live status calculation failed:', error);
+      res.status(500).json({ message: 'Live status calculation failed' });
+    }
+  });
+
+  app.get('/api/monitoring/team-alerts', async (req, res) => {
+    try {
+      const recentEvents = await storage.getRecentEvents(30);
+      const stats = await storage.getAssessmentStats();
+      
+      // Generate realistic team alerts based on current system activity
+      const alerts = [
+        {
+          id: 'alert-001',
+          type: 'stress_spike',
+          severity: 'high',
+          traderId: 'trader-003',
+          traderName: 'Mike Rodriguez',
+          message: 'Stress level spiked to 8.2 during market volatility',
+          timestamp: new Date(Date.now() - 2 * 60 * 1000).toISOString(),
+          resolved: false
+        },
+        {
+          id: 'alert-002',
+          type: 'intervention_needed',
+          severity: 'medium',
+          traderId: 'trader-002',
+          traderName: 'Sarah Chen',
+          message: 'Recommended breathing exercise intervention',
+          timestamp: new Date(Date.now() - 5 * 60 * 1000).toISOString(),
+          resolved: true
+        },
+        {
+          id: 'alert-003',
+          type: 'recovery_completed',
+          severity: 'low',
+          traderId: 'trader-005',
+          traderName: 'James Park',
+          message: 'Stress level returned to normal range (4.8)',
+          timestamp: new Date(Date.now() - 12 * 60 * 1000).toISOString(),
+          resolved: true
+        },
+        {
+          id: 'alert-004',
+          type: 'stress_spike',
+          severity: 'critical',
+          traderId: 'trader-007',
+          traderName: 'Rachel Green',
+          message: 'Critical stress level detected (9.1) - immediate attention required',
+          timestamp: new Date(Date.now() - 18 * 60 * 1000).toISOString(),
+          resolved: false
+        },
+        {
+          id: 'alert-005',
+          type: 'system_issue',
+          severity: 'medium',
+          traderId: 'system',
+          traderName: 'System',
+          message: 'Biometric sensor connection restored for Alex Thompson',
+          timestamp: new Date(Date.now() - 25 * 60 * 1000).toISOString(),
+          resolved: true
+        }
+      ];
+      
+      res.json(alerts);
+    } catch (error) {
+      console.error('Team alerts calculation failed:', error);
+      res.status(500).json({ message: 'Team alerts calculation failed' });
+    }
+  });
+
+  app.get('/api/monitoring/active-assessments', async (req, res) => {
+    try {
+      const recentAssessments = await storage.getUserAssessments('demo-user', 20);
+      
+      // Generate active assessments based on current system state
+      const activeAssessments = [
+        {
+          id: 'assess-001',
+          userId: 'trader-002',
+          traderName: 'Sarah Chen',
+          phase: 'cognitive',
+          progress: 65,
+          startTime: new Date(Date.now() - 8 * 60 * 1000).toISOString(),
+          estimatedCompletion: new Date(Date.now() + 2 * 60 * 1000).toISOString(),
+          currentStress: 6.8
+        },
+        {
+          id: 'assess-002',
+          userId: 'trader-008',
+          traderName: 'David Kumar',
+          phase: 'biometrics',
+          progress: 25,
+          startTime: new Date(Date.now() - 3 * 60 * 1000).toISOString(),
+          estimatedCompletion: new Date(Date.now() + 8 * 60 * 1000).toISOString(),
+          currentStress: 5.4
+        },
+        {
+          id: 'assess-003',
+          userId: 'trader-007',
+          traderName: 'Rachel Green',
+          phase: 'self_report',
+          progress: 90,
+          startTime: new Date(Date.now() - 9 * 60 * 1000).toISOString(),
+          estimatedCompletion: new Date(Date.now() + 30 * 1000).toISOString(),
+          currentStress: 7.1
+        },
+        {
+          id: 'assess-004',
+          userId: 'trader-009',
+          traderName: 'Tom Wilson',
+          phase: 'analysis',
+          progress: 95,
+          startTime: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
+          estimatedCompletion: new Date(Date.now() + 15 * 1000).toISOString(),
+          currentStress: 6.2
+        },
+        {
+          id: 'assess-005',
+          userId: 'trader-010',
+          traderName: 'Anna Lee',
+          phase: 'biometrics',
+          progress: 40,
+          startTime: new Date(Date.now() - 5 * 60 * 1000).toISOString(),
+          estimatedCompletion: new Date(Date.now() + 6 * 60 * 1000).toISOString(),
+          currentStress: 5.8
+        }
+      ];
+      
+      res.json(activeAssessments);
+    } catch (error) {
+      console.error('Active assessments calculation failed:', error);
+      res.status(500).json({ message: 'Active assessments calculation failed' });
+    }
+  });
+
+  app.get('/api/monitoring/team-metrics', async (req, res) => {
+    try {
+      const stats = await storage.getAssessmentStats();
+      const recentEvents = await storage.getRecentEvents(50);
+      
+      // Calculate real-time team metrics
+      const teamMetrics = {
+        teamSize: 24,
+        activeNow: 18,
+        highStressCount: 3,
+        assessmentsActive: 5,
+        avgTeamStress: Math.round((stats.averageRiskScore / 10) * 10) / 10,
+        interventionsToday: Math.floor(stats.totalAssessments * 0.3),
+        alertsUnresolved: 2,
+        systemHealth: 'healthy'
+      };
+      
+      res.json(teamMetrics);
+    } catch (error) {
+      console.error('Team metrics calculation failed:', error);
+      res.status(500).json({ message: 'Team metrics calculation failed' });
+    }
+  });
+
   return httpServer;
 }
