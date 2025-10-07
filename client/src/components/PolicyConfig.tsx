@@ -73,10 +73,10 @@ export function PolicyConfig() {
     setFormData(prev => ({
       ...prev,
       enabledModes: {
-        ...prev.enabledModes,
+        ...((prev && prev.enabledModes) || {}),
         [mode]: enabled,
       },
-    }));
+    } as Partial<Policy>));
     setIsDirty(true);
   };
 

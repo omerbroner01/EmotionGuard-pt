@@ -138,7 +138,7 @@ export function AdminAnalytics({ stats, recentEvents, isLoading, lastMessage }: 
               <div className="bg-muted rounded-lg p-3">
                 <div className="text-xs text-muted-foreground">Avg Risk Score</div>
                 <div className="text-lg font-semibold" data-testid="metric-avgrisk">
-                  {stats?.averageRiskScore ? Number(stats.averageRiskScore).toFixed(1) : '45.2'}
+                  {typeof stats?.averageRiskScore === 'number' ? Number(stats.averageRiskScore).toFixed(1) : 'N/A'}
                 </div>
                 <div className="text-xs text-muted-foreground">Within normal range</div>
               </div>
@@ -149,13 +149,13 @@ export function AdminAnalytics({ stats, recentEvents, isLoading, lastMessage }: 
                 <div className="flex justify-between mb-1">
                   <span className="text-sm">Pass Rate</span>
                   <span className="text-sm font-medium">
-                    {stats ? (100 - stats.blockRate - (stats.triggerRate * 0.6)).toFixed(1) : '94.7'}%
+                    {stats ? (100 - stats.blockRate - (stats.triggerRate * 0.6)).toFixed(1) : 'N/A'}%
                   </span>
                 </div>
                 <div className="w-full bg-background rounded-full h-2">
                   <div 
                     className="bg-chart-1 h-2 rounded-full" 
-                    style={{ width: `${stats ? (100 - stats.blockRate - (stats.triggerRate * 0.6)) : 94.7}%` }}
+                    style={{ width: `${stats ? (100 - stats.blockRate - (stats.triggerRate * 0.6)) : 0}%` }}
                   ></div>
                 </div>
               </div>
@@ -164,13 +164,13 @@ export function AdminAnalytics({ stats, recentEvents, isLoading, lastMessage }: 
                 <div className="flex justify-between mb-1">
                   <span className="text-sm">Hold Rate</span>
                   <span className="text-sm font-medium">
-                    {stats ? (stats.triggerRate * 0.6).toFixed(1) : '4.1'}%
+                    {stats ? (stats.triggerRate * 0.6).toFixed(1) : 'N/A'}%
                   </span>
                 </div>
                 <div className="w-full bg-background rounded-full h-2">
                   <div 
                     className="bg-accent h-2 rounded-full" 
-                    style={{ width: `${stats ? (stats.triggerRate * 0.6) : 4.1}%` }}
+                    style={{ width: `${stats ? (stats.triggerRate * 0.6) : 0}%` }}
                   ></div>
                 </div>
               </div>
@@ -179,13 +179,13 @@ export function AdminAnalytics({ stats, recentEvents, isLoading, lastMessage }: 
                 <div className="flex justify-between mb-1">
                   <span className="text-sm">Block Rate</span>
                   <span className="text-sm font-medium">
-                    {stats?.blockRate?.toFixed(1) || '1.2'}%
+                    {typeof stats?.blockRate === 'number' ? stats.blockRate.toFixed(1) : 'N/A'}%
                   </span>
                 </div>
                 <div className="w-full bg-background rounded-full h-2">
                   <div 
                     className="bg-chart-3 h-2 rounded-full" 
-                    style={{ width: `${stats?.blockRate || 1.2}%` }}
+                    style={{ width: `${stats?.blockRate || 0}%` }}
                   ></div>
                 </div>
               </div>

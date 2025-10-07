@@ -18,7 +18,7 @@ export function useWebSocket() {
     
     ws.onopen = () => {
       setIsConnected(true);
-      console.log('WebSocket connected');
+      if (import.meta.env.DEV && import.meta.env.VITE_DEBUG) console.log('WebSocket connected');
     };
     
     ws.onmessage = (event) => {
@@ -32,7 +32,7 @@ export function useWebSocket() {
     
     ws.onclose = () => {
       setIsConnected(false);
-      console.log('WebSocket disconnected');
+      if (import.meta.env.DEV && import.meta.env.VITE_DEBUG) console.log('WebSocket disconnected');
     };
     
     ws.onerror = (error) => {

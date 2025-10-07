@@ -1,6 +1,7 @@
 import express, { type Express } from "express";
 import fs from "fs";
 import path from "path";
+import { fileURLToPath } from "url";
 import { createServer as createViteServer, createLogger } from "vite";
 import { type Server } from "http";
 import viteConfig from "../vite.config";
@@ -19,15 +20,31 @@ export function log(message: string, source = "express") {
   console.log(`${formattedTime} [${source}] ${message}`);
 }
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
 export async function setupVite(app: Express, server: Server) {
+  // Ensure Vite's root is explicitly the client directory. Use this file's
+  // location (server folder) as the base so resolution is stable regardless
+  // of the current working directory or runner.
+  const clientRoot = path.resolve(__dirname, "..", "client");
+
   const serverOptions = {
     middlewareMode: true,
     hmr: { server },
     allowedHosts: true as const,
   };
 
+  // If the imported viteConfig is a function (exported via defineConfig(async () => ...))
+  // call it to obtain the actual config object. Otherwise use it directly.
+  const resolvedViteConfig =
+    typeof viteConfig === "function" ? await (viteConfig as any)() : (viteConfig as any);
+
   const vite = await createViteServer({
-    ...viteConfig,
+    // spread the resolved config but explicitly override root and
+    // server options so middleware resolves files from the `client` folder.
+    ...resolvedViteConfig,
+    root: clientRoot,
     configFile: false,
     customLogger: {
       ...viteLogger,
@@ -45,14 +62,9 @@ export async function setupVite(app: Express, server: Server) {
     const url = req.originalUrl;
 
     try {
-      const clientTemplate = path.resolve(
-        import.meta.dirname,
-        "..",
-        "client",
-        "index.html",
-      );
+      const clientTemplate = path.resolve(clientRoot, "index.html");
 
-      // always reload the index.html file from disk incase it changes
+      // always reload the index.html file from disk in case it changes
       let template = await fs.promises.readFile(clientTemplate, "utf-8");
       template = template.replace(
         `src="/src/main.tsx"`,

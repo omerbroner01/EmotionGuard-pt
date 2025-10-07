@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, type ChangeEvent } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -21,7 +21,9 @@ export function FaceDetectionDisplay({ onMetricsUpdate, autoStart = false }: Fac
     blinkHistory, 
     startDetection, 
     stopDetection, 
-    clearHistory 
+    clearHistory,
+    updateSettings,
+    settings,
   } = useFaceDetection();
   
   const [sessionDuration, setSessionDuration] = useState(0);
@@ -63,6 +65,17 @@ export function FaceDetectionDisplay({ onMetricsUpdate, autoStart = false }: Fac
     } else {
       await startDetection();
     }
+  };
+
+  const handleConfidenceChange = (e: ChangeEvent<HTMLInputElement>) => {
+    const value = Number(e.target.value);
+    updateSettings({ minDetectionConfidence: value, minTrackingConfidence: value });
+  };
+
+  const handleBlinkThresholdChange = (e: ChangeEvent<HTMLInputElement>) => {
+    const value = Number(e.target.value);
+    // Keep open slightly above close to preserve hysteresis
+    updateSettings({ blinkCloseThreshold: value, blinkOpenThreshold: Math.min(0.35, value + 0.04) });
   };
 
   const formatDuration = (seconds: number) => {
@@ -215,6 +228,28 @@ export function FaceDetectionDisplay({ onMetricsUpdate, autoStart = false }: Fac
                       className="h-2"
                     />
                   </div>
+
+                  <div>
+                    <div className="flex justify-between text-sm mb-1">
+                      <span>FPS</span>
+                      <span data-testid="text-fps">{metrics.fps ?? 0}</span>
+                    </div>
+                    <Progress 
+                      value={Math.min(((metrics.fps ?? 0) / 30) * 100, 100)} 
+                      className="h-2"
+                    />
+                  </div>
+
+                  <div>
+                    <div className="flex justify-between text-sm mb-1">
+                      <span>Latency</span>
+                      <span data-testid="text-latency">{metrics.latencyMs ?? 0} ms</span>
+                    </div>
+                    <Progress 
+                      value={Math.max(0, Math.min(100, 100 - ((metrics.latencyMs ?? 0) / 120) * 100))} 
+                      className="h-2"
+                    />
+                  </div>
                 </div>
               </>
             )}
@@ -242,6 +277,28 @@ export function FaceDetectionDisplay({ onMetricsUpdate, autoStart = false }: Fac
             >
               Clear History
             </Button>
+            <div className="flex-1 space-y-2">
+              <div className="text-xs text-muted-foreground">Confidence ({settings.minDetectionConfidence.toFixed(2)})</div>
+              <input
+                type="range"
+                min={0.3}
+                max={0.9}
+                step={0.01}
+                value={settings.minDetectionConfidence}
+                onChange={handleConfidenceChange}
+                className="w-full"
+              />
+              <div className="text-xs text-muted-foreground">Blink Threshold ({settings.blinkCloseThreshold.toFixed(2)})</div>
+              <input
+                type="range"
+                min={0.12}
+                max={0.3}
+                step={0.01}
+                value={settings.blinkCloseThreshold}
+                onChange={handleBlinkThresholdChange}
+                className="w-full"
+              />
+            </div>
           </div>
         )}
       </CardContent>

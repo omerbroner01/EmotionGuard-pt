@@ -35,7 +35,8 @@ export function RiskDisplay({ assessment, onProceed, onCooldown, onBlock, onOver
     return 'low';
   };
 
-  const riskLevel = getRiskLevel(assessment.riskScore);
+  const numericScore = typeof assessment.riskScore === 'number' ? assessment.riskScore : undefined;
+  const riskLevel = typeof numericScore === 'number' ? getRiskLevel(numericScore) : 'low';
 
   const getRiskIcon = () => {
     switch (riskLevel) {
@@ -79,13 +80,13 @@ export function RiskDisplay({ assessment, onProceed, onCooldown, onBlock, onOver
           <div className="flex justify-between items-center mb-2">
             <span className="text-sm text-muted-foreground">Risk Score</span>
             <span className="text-2xl font-bold text-accent" data-testid="text-riskscore">
-              {assessment.riskScore}
+              {typeof numericScore === 'number' ? numericScore : 'Pending'}
             </span>
           </div>
           <div className="w-full bg-background rounded-full h-2">
             <div 
               className="gradient-progress h-2 rounded-full transition-all duration-1000" 
-              style={{ width: `${assessment.riskScore}%` }}
+              style={{ width: `${typeof numericScore === 'number' ? numericScore : 0}%` }}
               data-testid="progress-risk"
             ></div>
           </div>

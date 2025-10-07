@@ -89,26 +89,28 @@ export function BaselineCalibration() {
     setCurrentPhase('processing');
     setProgress(80);
     
-    // Stop biometric tracking and calculate baseline
-    const biometricData = stopTracking();
+  // Stop biometric tracking and calculate baseline
+  const biometricData: any = stopTracking() || {};
     
     // Calculate baseline metrics
     const reactionTimes = results.map(r => r.reactionTimeMs);
     const accuracy = results.filter(r => r.correct).length / results.length;
     
-    const avgReactionTime = reactionTimes.reduce((sum, rt) => sum + rt, 0) / reactionTimes.length;
-    const reactionTimeVariance = reactionTimes.reduce((sum, rt) => sum + Math.pow(rt - avgReactionTime, 2), 0) / reactionTimes.length;
+  const avgReactionTime = reactionTimes.reduce((sum: number, rt: number) => sum + rt, 0) / reactionTimes.length;
+  const reactionTimeVariance = reactionTimes.reduce((sum: number, rt: number) => sum + Math.pow(rt - avgReactionTime, 2), 0) / reactionTimes.length;
     const reactionTimeStdDev = Math.sqrt(reactionTimeVariance);
     
     // Calculate biometric baselines
-    const mouseStability = biometricData.mouseMovements.length > 0 ? 
-      Math.max(0, 1 - (biometricData.mouseMovements.reduce((sum, m) => sum + m, 0) / biometricData.mouseMovements.length / 100)) : 0.8;
+    const mouseMovements: number[] = Array.isArray(biometricData.mouseMovements) ? biometricData.mouseMovements : [];
+    const mouseStability = mouseMovements.length > 0 ?
+      Math.max(0, 1 - (mouseMovements.reduce((sum: number, m: number) => sum + (m || 0), 0) / mouseMovements.length / 100)) : 0.8;
     
-    const keystrokeRhythm = biometricData.keystrokeTimings.length > 0 ?
-      Math.max(0, 1 - (Math.sqrt(biometricData.keystrokeTimings.reduce((sum, t, i, arr) => {
-        if (i === 0) return 0;
-        return sum + Math.pow(t - arr[i-1], 2);
-      }, 0) / (biometricData.keystrokeTimings.length - 1)) / 1000)) : 0.8;
+    const keystrokeTimings: number[] = Array.isArray(biometricData.keystrokeTimings) ? biometricData.keystrokeTimings : [];
+    const keystrokeRhythm = keystrokeTimings.length > 0 ?
+      Math.max(0, 1 - (Math.sqrt(keystrokeTimings.reduce((sum: number, t: number, i: number, arr: number[]) => {
+        if (i === 0) return sum;
+        return sum + Math.pow((t || 0) - (arr[i-1] || 0), 2);
+      }, 0) / (keystrokeTimings.length - 1)) / 1000)) : 0.8;
 
     const baselineData = {
       reactionTimeMs: Math.round(avgReactionTime),

@@ -398,17 +398,18 @@ export class AIScoringService {
         attentionStability: cognitive.attentionStability.toFixed(3)
       },
       // Enhanced cognitive analytics from new assessment system (crash-proof)
-      cognitiveAnalytics: signals.cognitiveAnalytics ? {
-        overallScore: typeof signals.cognitiveAnalytics.overallScore === 'number' ? signals.cognitiveAnalytics.overallScore : 0.5,
-        reactionTimeMs: typeof signals.cognitiveAnalytics.reactionTimeMs === 'number' ? signals.cognitiveAnalytics.reactionTimeMs : 800,
+      // cognitiveAnalytics may be populated by other services; treat as any to avoid strict type mismatch
+      cognitiveAnalytics: (signals as any).cognitiveAnalytics ? {
+        overallScore: typeof (signals as any).cognitiveAnalytics.overallScore === 'number' ? (signals as any).cognitiveAnalytics.overallScore : 0.5,
+        reactionTimeMs: typeof (signals as any).cognitiveAnalytics.reactionTimeMs === 'number' ? (signals as any).cognitiveAnalytics.reactionTimeMs : 800,
         attentionMetrics: {
-          focusLapses: typeof signals.cognitiveAnalytics.attentionMetrics?.focusLapses === 'number' ? signals.cognitiveAnalytics.attentionMetrics.focusLapses : 0,
-          vigilanceDecline: typeof signals.cognitiveAnalytics.attentionMetrics?.vigilanceDecline === 'number' ? signals.cognitiveAnalytics.attentionMetrics.vigilanceDecline : 0
+          focusLapses: typeof (signals as any).cognitiveAnalytics?.attentionMetrics?.focusLapses === 'number' ? (signals as any).cognitiveAnalytics.attentionMetrics.focusLapses : 0,
+          vigilanceDecline: typeof (signals as any).cognitiveAnalytics?.attentionMetrics?.vigilanceDecline === 'number' ? (signals as any).cognitiveAnalytics.attentionMetrics.vigilanceDecline : 0
         },
         stressIndicators: {
-          performanceDecline: typeof signals.cognitiveAnalytics.stressIndicators?.performanceDecline === 'number' ? signals.cognitiveAnalytics.stressIndicators.performanceDecline : 0,
-          errorRate: typeof signals.cognitiveAnalytics.stressIndicators?.errorRate === 'number' ? signals.cognitiveAnalytics.stressIndicators.errorRate : 0.5,
-          responseVariability: typeof signals.cognitiveAnalytics.stressIndicators?.responseVariability === 'number' ? signals.cognitiveAnalytics.stressIndicators.responseVariability : 0.3
+          performanceDecline: typeof (signals as any).cognitiveAnalytics?.stressIndicators?.performanceDecline === 'number' ? (signals as any).cognitiveAnalytics.stressIndicators.performanceDecline : 0,
+          errorRate: typeof (signals as any).cognitiveAnalytics?.stressIndicators?.errorRate === 'number' ? (signals as any).cognitiveAnalytics.stressIndicators.errorRate : 0.5,
+          responseVariability: typeof (signals as any).cognitiveAnalytics?.stressIndicators?.responseVariability === 'number' ? (signals as any).cognitiveAnalytics.stressIndicators.responseVariability : 0.3
         }
       } : null,
       selfReport: signals.stressLevel || null,
@@ -641,7 +642,7 @@ export class AIScoringService {
     
     // Cognitive performance signal quality (sophisticated assessment)
     if (cog.accuracy > 0) {
-      const cognitiveQuality = this.assessCognitiveQuality(cog, signals?.cognitiveAnalytics);
+    const cognitiveQuality = this.assessCognitiveQuality(cog, (signals as any)?.cognitiveAnalytics);
       confidence += cognitiveQuality * 0.3; // Up to 30% for high-quality cognitive data
     }
     

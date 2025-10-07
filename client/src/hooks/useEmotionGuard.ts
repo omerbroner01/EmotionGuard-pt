@@ -12,8 +12,10 @@ export function useEmotionGuard(userId = 'demo-user') {
   // Debug currentAssessment changes
   const originalSetCurrentAssessment = setCurrentAssessment;
   const debugSetCurrentAssessment = useCallback((newAssessment: AssessmentResult | null) => {
-    console.log('🔧 setCurrentAssessment called with:', newAssessment);
-    console.log('🔧 Previous currentAssessment was:', currentAssessment);
+    if (import.meta.env.DEV && import.meta.env.VITE_DEBUG) {
+      // eslint-disable-next-line no-console
+      console.log('setCurrentAssessment:', { newAssessment, prev: currentAssessment });
+    }
     originalSetCurrentAssessment(newAssessment);
   }, [currentAssessment, originalSetCurrentAssessment]);
   const { startTracking, stopTracking, convertToBasicFormat, isTracking } = useBiometrics();
@@ -39,10 +41,10 @@ export function useEmotionGuard(userId = 'demo-user') {
       stressLevel?: number;
       facialMetrics?: FaceMetrics | null;
     }) => {
-      console.log('🛠️ assessmentMutation.mutationFn called with data:', data);
+      if (import.meta.env.DEV && import.meta.env.VITE_DEBUG) console.log('assessmentMutation.mutationFn', data);
       const rawBiometricData = stopTracking();
       const biometricData = convertToBasicFormat(rawBiometricData);
-      console.log('🛠️ Biometric data collected:', biometricData);
+      if (import.meta.env.DEV && import.meta.env.VITE_DEBUG) console.log('biometric data', biometricData);
       
       const signals = {
         mouseMovements: biometricData.mouseMovements,
@@ -54,20 +56,30 @@ export function useEmotionGuard(userId = 'demo-user') {
         facialMetrics: data.facialMetrics || undefined,
       };
 
-      console.log('🛠️ About to call emotionGuard.checkBeforeTrade with signals:', signals);
+      if (import.meta.env.DEV && import.meta.env.VITE_DEBUG) console.log('calling checkBeforeTrade', signals);
       const result = await emotionGuard.checkBeforeTrade(data.orderContext, signals, userId, data.fastMode);
-      console.log('🛠️ emotionGuard.checkBeforeTrade returned:', result);
+      if (import.meta.env.DEV && import.meta.env.VITE_DEBUG) console.log('checkBeforeTrade result', result);
       return result;
     },
     onSuccess: (result) => {
-      console.log('✅ assessmentMutation.onSuccess called with result:', result);
-      debugSetCurrentAssessment(result);
+      if (import.meta.env.DEV && import.meta.env.VITE_DEBUG) console.log('assessment onSuccess', result);
+      // The server may return a lightweight pending response when running in fastMode
+      // and no signals were provided. Normalize that into a currentAssessment object
+      // the UI can consume safely.
+      if (result && (result as any).pending) {
+        debugSetCurrentAssessment({
+          assessmentId: (result as any).assessmentId,
+          pending: true,
+        } as any);
+      } else {
+        debugSetCurrentAssessment(result as any);
+      }
       // Invalidate relevant queries
       queryClient.invalidateQueries({ queryKey: ['/api/assessments', userId] });
       queryClient.invalidateQueries({ queryKey: ['/api/analytics/stats'] });
     },
     onError: (error) => {
-      console.error('❌ assessmentMutation.onError called with error:', error);
+      console.error('assessment onError', error);
     },
   });
 
@@ -114,18 +126,28 @@ export function useEmotionGuard(userId = 'demo-user') {
   });
 
   const startAssessment = useCallback(async (orderContext: OrderContext) => {
-    console.log('🚀 startAssessment called with orderContext:', orderContext);
+    if (import.meta.env.DEV && import.meta.env.VITE_DEBUG) console.log('startAssessment', orderContext);
+    // First, create a placeholder assessment (so components can safely push metrics)
+    if (import.meta.env.DEV && import.meta.env.VITE_DEBUG) console.log('creating placeholder assessment');
+    try {
+      const placeholderResult = await emotionGuard.checkBeforeTrade(orderContext, {}, userId, true);
+      if (placeholderResult && (placeholderResult as any).pending) {
+        debugSetCurrentAssessment({ assessmentId: (placeholderResult as any).assessmentId, pending: true } as any);
+      }
+    } catch (e) {
+      console.warn('Failed to create placeholder assessment, proceeding to start tracking anyway', e);
+    }
+
+    // Now start biometric tracking and perform the full assessment mutate (which will stop tracking internally)
     startTracking();
-    console.log('🚀 About to call assessmentMutation.mutateAsync');
-    
-    // Performance optimization: Single API call with backend timeout handling
-    // Delegate timeout logic to backend to avoid duplicate mutations
+    if (import.meta.env.DEV && import.meta.env.VITE_DEBUG) console.log('calling mutateAsync');
+
     const result = await assessmentMutation.mutateAsync({ 
       orderContext,
       fastMode: true // Enable fast mode for B2B demo performance
     });
-    
-    console.log('✅ Assessment completed successfully');
+
+    if (import.meta.env.DEV && import.meta.env.VITE_DEBUG) console.log('assessment completed');
     return result;
   }, [startTracking, assessmentMutation]);
 
@@ -133,7 +155,16 @@ export function useEmotionGuard(userId = 'demo-user') {
     // Use the current assessment that was created by startAssessment
     if (!currentAssessment) {
       console.error('No current assessment to update');
-      return;
+      return null;
+    }
+
+    // Guard: avoid calling the server with a missing assessmentId (client observed
+    // requests like /assessments/undefined). If we don't have a valid id yet, let
+    // the caller know and allow retry later.
+    const assessmentId = (currentAssessment as any).assessmentId;
+    if (!assessmentId) {
+      console.warn('Attempted to update assessment but assessmentId is missing. Will not call server.');
+      return currentAssessment;
     }
 
     try {
@@ -148,32 +179,33 @@ export function useEmotionGuard(userId = 'demo-user') {
         }
         if (cognitiveResults && cognitiveResults.length > 0) {
           updateData.cognitiveResults = cognitiveResults;
-          console.log('📊 Including cognitive results in update:', cognitiveResults.length, 'test results');
+          if (import.meta.env.DEV && import.meta.env.VITE_DEBUG) console.log('including cognitive results', cognitiveResults.length);
         }
         
-        await fetch(`/api/emotion-guard/assessments/${currentAssessment.assessmentId}/facial-metrics`, {
+        await fetch(`/api/emotion-guard/assessments/${assessmentId}/facial-metrics`, {
           method: 'PUT',
           headers: {
             'Content-Type': 'application/json',
           },
           body: JSON.stringify(updateData),
         });
-        console.log('✓ Assessment data successfully updated:', updateData);
+        if (import.meta.env.DEV && import.meta.env.VITE_DEBUG) console.log('assessment updated', updateData);
       }
 
       // Fetch the updated assessment to get the latest data including calculated scores
-      const response = await fetch(`/api/emotion-guard/assessments/${currentAssessment.assessmentId}`);
+  const response = await fetch(`/api/emotion-guard/assessments/${assessmentId}`);
       if (response.ok) {
         const updatedAssessment = await response.json();
         // Transform the database assessment object to match AssessmentResult interface
-        const transformedAssessment = {
+        const transformedAssessment: any = {
           assessmentId: updatedAssessment.id,
-          riskScore: updatedAssessment.riskScore,
+          riskScore: typeof updatedAssessment.riskScore === 'number' ? updatedAssessment.riskScore : undefined,
           verdict: updatedAssessment.verdict,
           reasonTags: updatedAssessment.reasonTags || [],
           confidence: updatedAssessment.confidence || 0,
-          recommendedAction: currentAssessment.recommendedAction || 'Continue with assessment',
+          recommendedAction: currentAssessment?.recommendedAction || 'Continue with assessment',
           cooldownDuration: updatedAssessment.cooldownDurationMs,
+          pending: updatedAssessment.riskScore === null || updatedAssessment.riskScore === undefined,
         };
         debugSetCurrentAssessment(transformedAssessment);
         return transformedAssessment;
@@ -226,7 +258,7 @@ export function useEmotionGuard(userId = 'demo-user') {
   }, [currentAssessment, tradeOutcomeMutation]);
 
   const resetAssessment = useCallback(() => {
-    console.log('🔄 resetAssessment called - clearing currentAssessment');
+    if (import.meta.env.DEV && import.meta.env.VITE_DEBUG) console.log('resetAssessment');
     debugSetCurrentAssessment(null);
   }, [debugSetCurrentAssessment]);
 

@@ -81,7 +81,9 @@ export const assessments = pgTable("assessments", {
   facialMetrics: jsonb("facial_metrics"), // blink rate, brow furrow, gaze stability, etc.
   
   // Risk assessment
-  riskScore: integer("risk_score").notNull(), // 0-100
+  // Allow null riskScore for placeholder/pending assessments so we don't persist demo numeric fallbacks
+  // Server code uses null to indicate pending; keep DB model compatible.
+  riskScore: integer("risk_score"), // 0-100 (nullable for pending)
   verdict: text("verdict").notNull(), // go, hold, block
   reasonTags: jsonb("reason_tags").notNull().default([]),
   confidence: real("confidence"),

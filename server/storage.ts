@@ -1,3 +1,4 @@
+import { and, avg, count, desc, eq, gte, sql } from 'drizzle-orm';
 import {
   users,
   policies,
@@ -202,12 +203,16 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getUserAssessments(userId: string, limit = 50): Promise<Assessment[]> {
-    return db
+    // Some database adapters return a query result instead of a query builder
+    // that supports .limit chaining. Read all matching rows ordered by
+    // createdAt then slice in JS to ensure compatibility across adapters.
+    const rows = await db
       .select()
       .from(assessments)
       .where(eq(assessments.userId, userId))
-      .orderBy(desc(assessments.createdAt))
-      .limit(limit);
+      .orderBy(desc(assessments.createdAt));
+
+    return rows.slice(0, limit);
   }
 
   async getAssessmentStats(timeframe: 'day' | 'week' | 'month' = 'day') {
@@ -224,17 +229,21 @@ export class DatabaseStorage implements IStorage {
         break;
     }
 
-    const stats = await db
-      .select({
-        totalAssessments: sql<number>`count(*)`,
-        blockCount: sql<number>`count(*) filter (where verdict = 'block')`,
-        overrideCount: sql<number>`count(*) filter (where override_used = true)`,
-        averageRiskScore: sql<number>`avg(risk_score)`,
-      })
-      .from(assessments)
+    const stats = await db.select({
+      totalAssessments: count(),
+      blockCount: count(and(eq(assessments.verdict, 'block'))),
+      overrideCount: count(and(eq(assessments.overrideUsed, true))),
+      averageRiskScore: avg(assessments.riskScore)
+    }).from(assessments)
       .where(gte(assessments.createdAt, since));
 
-    const result = stats[0];
+    const result = stats[0] || {
+      totalAssessments: 0,
+      blockCount: 0,
+      overrideCount: 0,
+      averageRiskScore: 0
+    };
+
     return {
       totalAssessments: result.totalAssessments,
       triggerRate: result.totalAssessments > 0 ? (result.totalAssessments / 100) : 0, // Mock calculation
@@ -337,11 +346,10 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getRecentEvents(limit = 50): Promise<RealTimeEvent[]> {
-    return db
-      .select()
-      .from(realTimeEvents)
-      .orderBy(desc(realTimeEvents.createdAt))
-      .limit(limit);
+    return db.query.realTimeEvents.findMany({
+      orderBy: desc(realTimeEvents.createdAt),
+      limit
+    });
   }
 
   async getTradingDesks(): Promise<TradingDesk[]> {
@@ -411,6 +419,15 @@ export class DatabaseStorage implements IStorage {
   async createAlertHistory(alert: InsertAlertHistory): Promise<AlertHistory> {
     const [newAlert] = await db.insert(alertHistory).values(alert).returning();
     return newAlert;
+  }
+
+  async updateAlertHistory(id: string, updates: Partial<InsertAlertHistory>): Promise<AlertHistory> {
+    const [updated] = await db
+      .update(alertHistory)
+      .set({ ...updates, updatedAt: new Date() } as any)
+      .where(eq(alertHistory.id, id))
+      .returning();
+    return updated;
   }
 
   async getAlertHistory(filters: {
@@ -491,11 +508,11 @@ export class DatabaseStorage implements IStorage {
     
     // Calculate analytics
     const totalAlerts = alerts.length;
-    const resolvedAlerts = alerts.filter(a => a.resolved);
-    const escalatedAlerts = alerts.filter(a => a.escalated);
+  const resolvedAlerts = alerts.filter((a: AlertHistory) => a.resolved);
+  const escalatedAlerts = alerts.filter((a: AlertHistory) => a.escalated);
     
     // Group by severity
-    const bySeverity = alerts.reduce((acc, alert) => {
+    const bySeverity = alerts.reduce((acc: Record<string, number>, alert: AlertHistory) => {
       acc[alert.severity] = (acc[alert.severity] || 0) + 1;
       return acc;
     }, {} as Record<string, number>);
@@ -513,7 +530,7 @@ export class DatabaseStorage implements IStorage {
     
     // Calculate average response time (for resolved alerts)
     const avgResponseTime = resolvedAlerts.length > 0 
-      ? resolvedAlerts.reduce((sum, alert) => sum + (alert.responseTime || 0), 0) / resolvedAlerts.length
+      ? resolvedAlerts.reduce((sum: number, alert: AlertHistory) => sum + (alert.responseTime || 0), 0) / resolvedAlerts.length
       : 0;
     
     // Mock data for other analytics (would need more complex queries in production)

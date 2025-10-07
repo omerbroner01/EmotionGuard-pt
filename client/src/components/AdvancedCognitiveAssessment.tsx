@@ -3,10 +3,26 @@ import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { AlertCircle, Zap, Target, Brain } from 'lucide-react';
-
 import type { CognitiveTestResult, TestTrial } from '@/types/emotionGuard';
 
-interface AdvancedCognitiveAssessmentProps {
+interface A        // Move to next test or complete assessment
+      const currentIndex = testQueue.indexOf(currentTest);
+      if (currentIndex < testQueue.length - 1) {
+        const nextTest = testQueue[currentIndex + 1];
+        
+        // Reset all state atomically
+        setIsInTrial(false);
+        trialDataRef.current = [];
+        responsePatternRef.current = '';
+        setCurrentDifficulty('easy');
+        setTestProgress(0);
+        setPerformanceHistory([]);
+        
+        // Small delay for better UX
+        await new Promise(resolve => setTimeout(resolve, 500));
+        
+        setCurrentTest(nextTest);
+        initializeTest(nextTest);tiveAssessmentProps {
   onComplete: (results: CognitiveTestResult[]) => void;
   config?: {
     includeStroop?: boolean;
@@ -43,6 +59,73 @@ const WORKING_MEMORY_CONFIG = {
   nBackLevels: { easy: 1, medium: 2, hard: 3 }
 };
 
+const generateStimulus = (testType: string, difficulty: 'easy' | 'medium' | 'hard') => {
+  switch (testType) {
+    case 'stroop': {
+      const words = STROOP_CONFIG.words;
+      const colorKeys = Object.keys(STROOP_CONFIG.colors) as Array<keyof typeof STROOP_CONFIG.colors>;
+      
+      const word = words[Math.floor(Math.random() * words.length)];
+      let colorName: keyof typeof STROOP_CONFIG.colors;
+      
+      // Difficulty affects congruence
+      if (difficulty === 'easy') {
+        // 70% congruent trials
+        colorName = Math.random() < 0.7 ? (word as keyof typeof STROOP_CONFIG.colors) : 
+          colorKeys[Math.floor(Math.random() * colorKeys.length)];
+      } else if (difficulty === 'medium') {
+        // 30% congruent trials
+        colorName = Math.random() < 0.3 ? (word as keyof typeof STROOP_CONFIG.colors) : 
+          colorKeys[Math.floor(Math.random() * colorKeys.length)];
+      } else {
+        // 0% congruent trials (all incongruent)
+        const otherColors = colorKeys.filter(color => color !== word);
+        colorName = otherColors[Math.floor(Math.random() * otherColors.length)];
+      }
+      
+      return {
+        stimulus: word,
+        displayColor: STROOP_CONFIG.colors[colorName],
+        correctResponse: colorName.toLowerCase()
+      };
+    }
+    
+    case 'reaction': {
+      const stimulusTypes = difficulty === 'easy' ? ['visual'] : 
+                          difficulty === 'medium' ? ['visual', 'color'] : 
+                          ['visual', 'color', 'auditory'];
+      
+      const stimulusType = stimulusTypes[Math.floor(Math.random() * stimulusTypes.length)];
+      const stimulus = REACTION_STIMULI[stimulusType as keyof typeof REACTION_STIMULI][
+        Math.floor(Math.random() * REACTION_STIMULI[stimulusType as keyof typeof REACTION_STIMULI].length)
+      ];
+      
+      return {
+        stimulus,
+        stimulusType,
+        correctResponse: 'space' // Space bar for all reaction trials
+      };
+    }
+    
+    case 'memory': {
+      const spanLengths = WORKING_MEMORY_CONFIG.digitSpans[difficulty];
+      const spanLength = spanLengths[Math.floor(Math.random() * spanLengths.length)];
+      const digits = Array.from({ length: spanLength }, () => 
+        Math.floor(Math.random() * 10).toString()
+      ).join('');
+      
+      return {
+        stimulus: digits,
+        correctResponse: digits.split('').reverse().join(''), // Reverse for backward span
+        memoryType: 'digit_span'
+      };
+    }
+    
+    default:
+      return { stimulus: '', correctResponse: '' };
+  }
+};
+
 export function AdvancedCognitiveAssessment({ onComplete, config = {} }: AdvancedCognitiveAssessmentProps) {
   const {
     includeStroop = true,
@@ -53,12 +136,18 @@ export function AdvancedCognitiveAssessment({ onComplete, config = {} }: Advance
     adaptiveDifficulty = true
   } = config;
 
+  // State management
+  const [isLoading, setIsLoading] = useState(false);
+  const [hasError, setHasError] = useState<string | null>(null);
+  const [completedTests, setCompletedTests] = useState<Set<string>>(new Set());
+  const [assessmentStatus, setAssessmentStatus] = useState<'pending' | 'in-progress' | 'completed'>('pending');
+  
   const [currentTest, setCurrentTest] = useState<string>('');
   const [testProgress, setTestProgress] = useState(0);
+  const [testQueue, setTestQueue] = useState<string[]>([]);
   const [isInTrial, setIsInTrial] = useState(false);
   const [results, setResults] = useState<CognitiveTestResult[]>([]);
   const [currentTrial, setCurrentTrial] = useState<Partial<TestTrial>>({});
-  const [testQueue, setTestQueue] = useState<string[]>([]);
   
   // Performance tracking
   const [trialStartTime, setTrialStartTime] = useState(0);
@@ -72,19 +161,95 @@ export function AdvancedCognitiveAssessment({ onComplete, config = {} }: Advance
   const trialDataRef = useRef<TestTrial[]>([]);
   const responsePatternRef = useRef<string>('');
 
-  // Initialize test queue
-  useEffect(() => {
-    const queue: string[] = [];
-    if (includeStroop) queue.push('stroop');
-    if (includeReactionTime) queue.push('reaction');
-    if (includeWorkingMemory) queue.push('memory');
-    if (includeAttentionSwitch) queue.push('attention');
-    
-    setTestQueue(queue);
-    if (queue.length > 0) {
-      setCurrentTest(queue[0]);
-      initializeTest(queue[0]);
+  // State validation helper
+  const validateTestState = useCallback(() => {
+    if (!currentTest || !testQueue.includes(currentTest)) {
+      throw new Error('Invalid test state - current test not in queue');
     }
+
+    const allTests = new Set(testQueue);
+    const completedTestsList = Array.from(completedTests);
+    
+    // Validate no unexpected tests were completed
+    const unexpectedTests = completedTestsList.filter(test => !allTests.has(test));
+    if (unexpectedTests.length > 0) {
+      console.error('Found completion state for unexpected tests:', unexpectedTests);
+      // Reset to valid state
+      setCompletedTests(new Set(completedTestsList.filter(test => allTests.has(test))));
+    }
+
+    const allTestsComplete = testQueue.every(test => completedTests.has(test));
+    const hasValidResults = results.length === completedTests.size &&
+                         results.every(r => r && typeof r.overallScore === 'number');
+
+    // Update assessment status
+    if (allTestsComplete && hasValidResults) {
+      if (assessmentStatus !== 'completed') {
+        console.log('🧠 All tests complete with valid results - marking assessment completed');
+        setAssessmentStatus('completed');
+      }
+    } else if (testQueue.length > 0) {
+      if (assessmentStatus === 'pending' && completedTests.size > 0) {
+        setAssessmentStatus('in-progress');
+      } else if (assessmentStatus === 'completed') {
+        console.warn('Assessment marked completed but has incomplete/invalid tests - reverting to in-progress');
+        setAssessmentStatus('in-progress');
+      }
+    }
+  }, [currentTest, testQueue]);
+
+  // Initialize test queue and handle cleanup
+  useEffect(() => {
+    let isInitializing = true; // Flag to prevent setState after unmount
+    let cleanupTimer: NodeJS.Timeout;
+    
+    const initializeTests = async () => {
+      setIsLoading(true);
+      setHasError(null);
+      try {
+        const queue: string[] = [];
+        if (includeStroop) queue.push('stroop');
+        if (includeReactionTime) queue.push('reaction');
+        if (includeWorkingMemory) queue.push('memory');
+        if (includeAttentionSwitch) queue.push('attention');
+        
+        if (queue.length === 0) {
+          throw new Error('No tests configured for assessment');
+        }
+        
+        if (isInitializing) {
+          setTestQueue(queue);
+          setCurrentTest(queue[0]);
+          setCompletedTests(new Set()); // Reset completion state
+          cleanupTimer = setTimeout(() => {
+            if (isInitializing) {
+              initializeTest(queue[0]);
+            }
+          }, 500); // Brief delay for UI
+        }
+      } catch (err) {
+        if (isInitializing) {
+          setHasError('Failed to initialize tests: ' + (err instanceof Error ? err.message : String(err)));
+        }
+      } finally {
+        if (isInitializing) {
+          setIsLoading(false);
+        }
+      }
+    };
+
+    initializeTests();
+
+    return () => {
+      isInitializing = false; // Prevent state updates after unmount
+      if (hesitationTimer) {
+        clearTimeout(hesitationTimer);
+      }
+      if (cleanupTimer) {
+        clearTimeout(cleanupTimer);
+      }
+      setCompletedTests(new Set()); // Reset completion state on unmount
+    };
   }, [includeStroop, includeReactionTime, includeWorkingMemory, includeAttentionSwitch]);
 
   // Adaptive difficulty adjustment
@@ -108,177 +273,246 @@ export function AdvancedCognitiveAssessment({ onComplete, config = {} }: Advance
   }, [adaptiveDifficulty, currentDifficulty]);
 
   const initializeTest = (testType: string) => {
-    console.log(`🧠 Initializing ${testType} test with ${currentDifficulty} difficulty`);
-    trialDataRef.current = [];
-    setIsInTrial(false);
-    
-    // Start first trial after brief delay
-    setTimeout(() => {
-      startTrial(testType);
-    }, 1000);
+    setIsLoading(true);
+    setHasError(null);
+    try {
+      console.log(`🧠 Initializing ${testType} test with ${currentDifficulty} difficulty`);
+      trialDataRef.current = [];
+      setIsInTrial(false);
+      
+      // Update assessment status when starting test
+      if (assessmentStatus === 'pending' && testQueue.length > 0) {
+        // Verify clean state before starting
+        setIsInTrial(false);
+        trialDataRef.current = [];
+        responsePatternRef.current = '';
+        setCurrentDifficulty('easy');
+        setTestProgress(0);
+        setAssessmentStatus('in-progress');
+      }
+      
+      // Start first trial after brief delay
+      setTimeout(() => {
+        startTrial(testType);
+      }, 1000);
+    } catch (err) {
+      setHasError('Failed to initialize test: ' + (err instanceof Error ? err.message : String(err)));
+    } finally {
+      setIsLoading(false);
+    }
   };
+
+
 
   const startTrial = (testType: string) => {
-    setIsInTrial(true);
-    setTrialStartTime(performance.now());
-    setKeyPressCount(0);
-    responsePatternRef.current = '';
-    
-    // Generate trial stimulus based on test type
-    const stimulus = generateStimulus(testType, currentDifficulty);
-    setCurrentTrial({
-      testType,
-      trialNumber: trialDataRef.current.length + 1,
-      difficulty: currentDifficulty,
-      timestamp: Date.now(),
-      ...stimulus
-    });
+    setIsLoading(true);
+    setHasError(null);
+    try {
+      setIsInTrial(true);
+      setTrialStartTime(performance.now());
+      setKeyPressCount(0);
+      responsePatternRef.current = '';
+      
+      // Generate trial stimulus based on test type
+      const stimulus = generateStimulus(testType, currentDifficulty);
+      setCurrentTrial({
+        testType,
+        trialNumber: trialDataRef.current.length + 1,
+        difficulty: currentDifficulty,
+        timestamp: Date.now(),
+        ...stimulus
+      });
 
-    // Start hesitation detection
-    setHesitationTimer(setTimeout(() => {
-      setKeyPressCount(prev => prev + 1);
-      responsePatternRef.current += 'H'; // H for hesitation
-    }, 2000));
+      // Start hesitation detection
+      setHesitationTimer(setTimeout(() => {
+        setKeyPressCount(prev => prev + 1);
+        responsePatternRef.current += 'H'; // H for hesitation
+      }, 2000));
+    } catch (err) {
+      setHasError('Failed to start trial: ' + (err instanceof Error ? err.message : String(err)));
+    } finally {
+      setIsLoading(false);
+    }
   };
 
-  const generateStimulus = (testType: string, difficulty: 'easy' | 'medium' | 'hard') => {
-    switch (testType) {
-      case 'stroop': {
-        const words = STROOP_CONFIG.words;
-        const colorKeys = Object.keys(STROOP_CONFIG.colors) as Array<keyof typeof STROOP_CONFIG.colors>;
+  const handleResponse = async (response: string) => {
+    if (!isInTrial || !currentTrial.stimulus) return;
+    setIsLoading(true);
+    
+    try {
+      const reactionTime = performance.now() - trialStartTime;
+      const correct = response.toLowerCase() === currentTrial.correctResponse?.toLowerCase();
+      
+      // Clear hesitation timer
+      if (hesitationTimer) {
+        clearTimeout(hesitationTimer);
+        setHesitationTimer(null);
+      }
+      
+      // Record response pattern
+      responsePatternRef.current += response.length === 1 ? 'R' : 'M'; // R for single response, M for multiple
+      
+      const trial: TestTrial = {
+        testType: currentTrial.testType!,
+        trialNumber: currentTrial.trialNumber!,
+        stimulus: currentTrial.stimulus,
+        correctResponse: currentTrial.correctResponse!,
+        userResponse: response,
+        reactionTimeMs: Math.round(reactionTime),
+        correct,
+        difficulty: currentTrial.difficulty!,
+        timestamp: currentTrial.timestamp!,
+        hesitationCount: keyPressCount,
+        responsePattern: responsePatternRef.current
+      };
+      
+      trialDataRef.current.push(trial);
+      setIsInTrial(false);
+      
+      // Adjust difficulty based on performance
+      const performanceScore = correct ? 1 : 0;
+      adjustDifficulty(performanceScore);
+      
+      // Check if test is complete
+      const maxTrials = fastMode ? 10 : 
+                      currentTrial.testType === 'stroop' ? 30 :
+                      currentTrial.testType === 'reaction' ? 25 :
+                      20;
+      
+      const isTestComplete = trialDataRef.current.length >= maxTrials;
+      
+      // Update progress before state changes
+      setTestProgress((trialDataRef.current.length / maxTrials) * 100);
+      
+      if (isTestComplete && currentTrial.testType) {
+        // Mark this test as completed
+        setCompletedTests(prev => {
+          const newSet = new Set(Array.from(prev));
+          newSet.add(currentTrial.testType!);
+          return newSet;
+        });
         
-        const word = words[Math.floor(Math.random() * words.length)];
-        let colorName: keyof typeof STROOP_CONFIG.colors;
-        
-        // Difficulty affects congruence
-        if (difficulty === 'easy') {
-          // 70% congruent trials
-          colorName = Math.random() < 0.7 ? (word as keyof typeof STROOP_CONFIG.colors) : 
-            colorKeys[Math.floor(Math.random() * colorKeys.length)];
-        } else if (difficulty === 'medium') {
-          // 30% congruent trials
-          colorName = Math.random() < 0.3 ? (word as keyof typeof STROOP_CONFIG.colors) : 
-            colorKeys[Math.floor(Math.random() * colorKeys.length)];
-        } else {
-          // 0% congruent trials (all incongruent)
-          const otherColors = colorKeys.filter(color => color !== word);
-          colorName = otherColors[Math.floor(Math.random() * otherColors.length)];
+        // Check if this was the last test
+        const remainingTests = testQueue.filter(test => !completedTests.has(test));
+        if (remainingTests.length === 1 && remainingTests[0] === currentTrial.testType) {
+          setAssessmentStatus('completed');
         }
         
-        return {
-          stimulus: word,
-          displayColor: STROOP_CONFIG.colors[colorName],
-          correctResponse: colorName.toLowerCase()
-        };
+        await completeCurrentTest();
+      } else if (!isTestComplete && currentTrial.testType) {
+        // Start next trial after brief delay
+        setTimeout(() => {
+          startTrial(currentTrial.testType!);
+        }, 1000);
       }
-      
-      case 'reaction': {
-        const stimulusTypes = difficulty === 'easy' ? ['visual'] : 
-                            difficulty === 'medium' ? ['visual', 'color'] : 
-                            ['visual', 'color', 'auditory'];
-        
-        const stimulusType = stimulusTypes[Math.floor(Math.random() * stimulusTypes.length)];
-        const stimulus = REACTION_STIMULI[stimulusType as keyof typeof REACTION_STIMULI][
-          Math.floor(Math.random() * REACTION_STIMULI[stimulusType as keyof typeof REACTION_STIMULI].length)
-        ];
-        
-        return {
-          stimulus,
-          stimulusType,
-          correctResponse: 'space' // Space bar for all reaction trials
-        };
-      }
-      
-      case 'memory': {
-        const spanLengths = WORKING_MEMORY_CONFIG.digitSpans[difficulty];
-        const spanLength = spanLengths[Math.floor(Math.random() * spanLengths.length)];
-        const digits = Array.from({ length: spanLength }, () => 
-          Math.floor(Math.random() * 10).toString()
-        ).join('');
-        
-        return {
-          stimulus: digits,
-          correctResponse: digits.split('').reverse().join(''), // Reverse for backward span
-          memoryType: 'digit_span'
-        };
-      }
-      
-      default:
-        return { stimulus: '', correctResponse: '' };
+    } catch (err) {
+      console.error('Error during test progression:', err);
+      setHasError('Failed to progress test: ' + (err instanceof Error ? err.message : String(err)));
+      setIsInTrial(false); // Ensure we're not stuck in trial state
+    } finally {
+      setIsLoading(false);
     }
   };
 
-  const handleResponse = (response: string) => {
-    if (!isInTrial || !currentTrial.stimulus) return;
-    
-    const reactionTime = performance.now() - trialStartTime;
-    const correct = response.toLowerCase() === currentTrial.correctResponse?.toLowerCase();
-    
-    // Clear hesitation timer
-    if (hesitationTimer) {
-      clearTimeout(hesitationTimer);
-      setHesitationTimer(null);
-    }
-    
-    // Record response pattern
-    responsePatternRef.current += response.length === 1 ? 'R' : 'M'; // R for single response, M for multiple
-    
-    const trial: TestTrial = {
-      testType: currentTrial.testType!,
-      trialNumber: currentTrial.trialNumber!,
-      stimulus: currentTrial.stimulus,
-      correctResponse: currentTrial.correctResponse!,
-      userResponse: response,
-      reactionTimeMs: Math.round(reactionTime),
-      correct,
-      difficulty: currentTrial.difficulty!,
-      timestamp: currentTrial.timestamp!,
-      hesitationCount: keyPressCount,
-      responsePattern: responsePatternRef.current
+  // Global keyboard handling for reaction tests: treat Space as response
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.code === 'Space') {
+        // Only handle space when we're in a reaction trial
+        if (currentTest === 'reaction' && isInTrial && currentTrial.correctResponse === 'space') {
+          event.preventDefault();
+          handleResponse('space');
+        }
+      }
     };
-    
-    trialDataRef.current.push(trial);
-    setIsInTrial(false);
-    
-    // Adjust difficulty based on performance
-    const performanceScore = correct ? 1 : 0;
-    adjustDifficulty(performanceScore);
-    
-    // Check if test is complete
-    const maxTrials = fastMode ? 10 : 
-                    currentTrial.testType === 'stroop' ? 30 :
-                    currentTrial.testType === 'reaction' ? 25 :
-                    20;
-    
-    if (trialDataRef.current.length >= maxTrials) {
-      completeCurrentTest();
-    } else {
-      // Start next trial after brief delay
-      setTimeout(() => {
-        startTrial(currentTrial.testType!);
-      }, 1000);
-    }
-    
-    setTestProgress((trialDataRef.current.length / maxTrials) * 100);
-  };
 
-  const completeCurrentTest = () => {
-    const testResult = analyzeTestResults(currentTest, trialDataRef.current);
-    setResults(prev => [...prev, testResult]);
-    
-    // Move to next test or complete assessment
-    const currentIndex = testQueue.indexOf(currentTest);
-    if (currentIndex < testQueue.length - 1) {
-      const nextTest = testQueue[currentIndex + 1];
-      setCurrentTest(nextTest);
-      setTestProgress(0);
-      setCurrentDifficulty('easy'); // Reset difficulty for new test
-      initializeTest(nextTest);
-    } else {
-      // All tests complete
-      const allResults = [...results, testResult];
-      console.log(`🧠 Cognitive assessment complete with ${allResults.length} tests`);
-      onComplete(allResults);
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [currentTest, isInTrial, currentTrial, handleResponse]);
+
+  const completeCurrentTest = async () => {
+    try {
+      setIsLoading(true);
+
+      // Validate we have sufficient valid trial data
+      if (!trialDataRef.current || trialDataRef.current.length === 0) {
+        throw new Error('No trial data available for test completion');
+      }
+
+      // Ensure we have enough valid trials
+      const validTrials = trialDataRef.current.filter(trial => 
+        trial && trial.reactionTimeMs > 0 && 
+        typeof trial.correct === 'boolean' &&
+        trial.stimulus && trial.correctResponse
+      );
+
+      if (validTrials.length < Math.floor(trialDataRef.current.length * 0.75)) {
+        throw new Error('Insufficient valid trial data - please retry the test');
+      }
+
+      // Analyze and store results
+      const testResult = analyzeTestResults(currentTest, validTrials);
+      
+      // Validate test result before storing
+      if (!testResult || typeof testResult.overallScore !== 'number' || 
+          !Array.isArray(testResult.trials) || testResult.trials.length === 0) {
+        throw new Error('Invalid test result generated');
+      }
+
+      setResults(prev => [...prev, testResult]);
+      
+      // Update completion state
+      if (currentTest) {
+        setCompletedTests(prev => {
+          const newSet = new Set(Array.from(prev));
+          newSet.add(currentTest);
+          return newSet;
+        });
+      }
+
+      // Move to next test or complete assessment
+      const currentIndex = testQueue.indexOf(currentTest);
+      if (currentIndex < testQueue.length - 1) {
+        const nextTest = testQueue[currentIndex + 1];
+        
+        // Reset state atomically before transition
+        setIsInTrial(false);
+        setTestProgress(0);
+        setCurrentDifficulty('easy');
+        setPerformanceHistory([]);
+        trialDataRef.current = [];
+        responsePatternRef.current = '';
+        
+        // Small delay for better UX
+        await new Promise(resolve => setTimeout(resolve, 500));
+        
+        // Transition to next test
+        setCurrentTest(nextTest);
+        initializeTest(nextTest);
+      } else {
+        // Verify all tests are complete and have valid results
+        const allResults = [...results, testResult];
+        const allTestsComplete = testQueue.every(test => completedTests.has(test));
+        const allResultsValid = allResults.every(result => {
+          return result && 
+                 typeof result.overallScore === 'number' && 
+                 Array.isArray(result.trials) && 
+                 result.trials.length > 0;
+        });
+
+        if (!allTestsComplete || !allResultsValid) {
+          throw new Error('Assessment incomplete or invalid results detected');
+        }
+
+        console.log(`🧠 Cognitive assessment complete with ${allResults.length} validated tests`);
+        onComplete(allResults);
+      }
+    } catch (err) {
+      console.error('Error completing test:', err);
+      setHasError('Failed to complete test: ' + (err instanceof Error ? err.message : String(err)));
+      throw err; // Re-throw to allow caller to handle
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -358,6 +592,15 @@ export function AdvancedCognitiveAssessment({ onComplete, config = {} }: Advance
   };
 
   const renderTestInterface = () => {
+    if (isLoading) {
+      return (
+        <div className="text-center py-8" data-testid="cognitive-loading">
+          <Brain className="w-12 h-12 mx-auto mb-4 text-blue-500 animate-pulse" />
+          <p className="text-lg">Processing...</p>
+        </div>
+      );
+    }
+
     if (!isInTrial || !currentTrial.stimulus) {
       return (
         <div className="text-center py-8" data-testid="cognitive-waiting">
@@ -511,16 +754,45 @@ export function AdvancedCognitiveAssessment({ onComplete, config = {} }: Advance
           })()}
           Advanced Cognitive Assessment
         </CardTitle>
+        {hasError && (
+          <div className="text-sm text-red-500 mt-2 p-2 bg-red-50 rounded" role="alert">
+            {hasError}
+          </div>
+        )}
         <div className="space-y-2">
-          <p className="text-sm text-muted-foreground">
-            Current Test: {formatTestName(currentTest)} ({testQueue.indexOf(currentTest) + 1} of {testQueue.length})
-          </p>
+          <div className="space-y-1">
+            <p className="text-sm text-muted-foreground">
+              Current Test: {formatTestName(currentTest)} ({testQueue.indexOf(currentTest) + 1} of {testQueue.length})
+            </p>
+            <p className="text-xs text-muted-foreground">
+              Assessment Status: 
+              {assessmentStatus === 'pending' && (
+                <span className="text-yellow-500 font-medium">Starting...</span>
+              )}
+              {assessmentStatus === 'in-progress' && (
+                <span className="text-blue-500 font-medium">In Progress</span>
+              )}
+              {assessmentStatus === 'completed' && (
+                <span className="text-green-500 font-medium">Completed</span>
+              )}
+            </p>
+          </div>
           <div className="space-y-1">
             <div className="flex justify-between text-xs">
-              <span>Progress</span>
+              <span className="flex items-center gap-2">
+                Progress
+                {isLoading && (
+                  <span className="inline-block w-2 h-2 bg-blue-500 rounded-full animate-ping"/>
+                )}
+              </span>
               <span>{Math.round(testProgress)}%</span>
             </div>
-            <Progress value={testProgress} className="h-2" data-testid="test-progress" />
+            <Progress 
+              value={testProgress} 
+              className="h-2" 
+              data-testid="test-progress" 
+              color={assessmentStatus === 'completed' ? 'green' : 'blue'}
+            />
           </div>
           <div className="flex justify-center gap-4 text-xs">
             <span className="flex items-center gap-1">

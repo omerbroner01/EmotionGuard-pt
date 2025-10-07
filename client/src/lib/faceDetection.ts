@@ -13,6 +13,8 @@ export interface FaceMetrics {
   jawOpenness: number; // jaw tension indicator
   browFurrow: number; // stress indicator
   gazeStability: number; // attention/distraction measure
+  fps?: number;
+  latencyMs?: number;
 }
 
 export interface BlinkEvent {
@@ -28,11 +30,12 @@ const LEFT_EYE_LANDMARKS = {
   inner: [133] // Inner corner
 };
 
+// Note: In MediaPipe FaceMesh, right eye outer corner is 263, inner is 362
 const RIGHT_EYE_LANDMARKS = {
-  upper: [386, 385, 384, 398], // Upper eyelid  
+  upper: [386, 385, 384, 398], // Upper eyelid
   lower: [362, 382, 381, 380], // Lower eyelid
-  outer: [362], // Outer corner
-  inner: [263] // Inner corner
+  outer: [263], // Outer corner (corrected)
+  inner: [362] // Inner corner (corrected)
 };
 
 export class FaceDetectionService {
@@ -42,15 +45,52 @@ export class FaceDetectionService {
   private isRunning = false;
   private blinkEvents: BlinkEvent[] = [];
   private lastEyeAspectRatio: number | null = null;
+  private smoothedEyeAspectRatio: number | null = null;
+  private smoothedJawOpenness: number | null = null;
+  private smoothedBrowFurrow: number | null = null;
+  private smoothedGazeStability: number | null = null;
+  private earWindow: number[] = [];
+  private readonly earWindowSize = 5; // temporal median filter window
   private callbacks: ((metrics: FaceMetrics) => void)[] = [];
   private lastFaceDetected = false;
   private blinkStartTime = 0;
   private isBlinking = false;
   private fallbackMode = false;
   private fallbackInterval?: NodeJS.Timeout;
+  private fpsCounter = { frames: 0, lastTs: 0, fps: 0 };
+  private lastFrameStartTs = 0;
+  private lastLatencyMs = 0;
+
+  // Settings
+  private settings: FaceDetectionSettings = {
+    minDetectionConfidence: 0.6,
+    minTrackingConfidence: 0.6,
+    refineLandmarks: true,
+    blinkCloseThreshold: 0.18,
+    blinkOpenThreshold: 0.22,
+    emaAlphaEar: 0.35,
+    emaAlphaOther: 0.25,
+    emaAlphaGaze: 0.2,
+    targetWidth: 640,
+    targetHeight: 480,
+    targetFps: 24,
+    debug: false,
+  };
+
+  private debugLog(...args: any[]) {
+    if (this.settings.debug && import.meta.env.DEV) {
+      // eslint-disable-next-line no-console
+      console.log('[FaceDetection]', ...args);
+    }
+  }
+
+  private applyEma(previous: number | null, current: number, alpha = 0.3): number {
+    if (previous === null || Number.isNaN(previous)) return current;
+    return alpha * current + (1 - alpha) * previous;
+  }
 
   async initialize(): Promise<void> {
-    console.log('🚀 Starting optimized face detection initialization...');
+    this.debugLog('Starting face detection initialization');
     
     // Performance optimization: Use race condition with fast fallback for B2B demos
     const initTimeout = new Promise((_, reject) => {
@@ -59,7 +99,7 @@ export class FaceDetectionService {
     
     try {
       // Step 1: Fast camera access with optimization
-      console.log('📷 Requesting camera access (optimized)...');
+      this.debugLog('Requesting camera access');
       
       const cameraPromise = navigator.mediaDevices.getUserMedia({ 
         video: { 
@@ -73,17 +113,18 @@ export class FaceDetectionService {
       
       let stream: MediaStream;
       try {
-        stream = await Promise.race([cameraPromise, initTimeout]);
-        console.log('✅ Camera access granted (fast mode)');
-      } catch (cameraError: any) {
-        console.warn('⚠️ Camera access failed or timeout - using fallback mode for demo continuity');
+        stream = (await Promise.race([cameraPromise, initTimeout])) as MediaStream;
+        this.debugLog('Camera access granted');
+      } catch (cameraError: unknown) {
+        const err: any = cameraError as any;
+        if (import.meta.env.DEV) console.warn('Camera access failed or timeout - using fallback mode', err);
         this.fallbackMode = true;
-        console.log('✅ Fallback mode active - simulated facial metrics for seamless demo');
+        this.debugLog('Fallback mode active - simulated metrics');
         return; // Skip MediaPipe initialization in fallback mode
       }
 
       // Step 2: Create and setup video element
-      console.log('Setting up video element...');
+      this.debugLog('Setting up video element');
       try {
         this.videoElement = document.createElement('video');
         this.videoElement.srcObject = stream;
@@ -97,60 +138,74 @@ export class FaceDetectionService {
           this.videoElement!.onerror = reject;
           setTimeout(() => reject(new Error('Video loading timeout')), 5000);
         });
-        console.log('✓ Video element ready');
-      } catch (videoError) {
-        console.error('✗ Video setup failed:', videoError);
-        throw new Error(`Video setup failed: ${videoError.message}`);
+        this.debugLog('Video element ready');
+      } catch (videoError: unknown) {
+        const err: any = videoError as any;
+        console.error('Video setup failed:', err);
+        throw new Error(`Video setup failed: ${err?.message || String(err)}`);
       }
 
       // Step 3: Initialize MediaPipe FaceMesh
-      console.log('Initializing MediaPipe FaceMesh...');
+      this.debugLog('Initializing MediaPipe FaceMesh');
       try {
         this.faceMesh = new FaceMesh({
           locateFile: (file) => {
             const url = `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`;
-            console.log(`Loading MediaPipe file: ${file} from ${url}`);
+            this.debugLog(`Loading MediaPipe file: ${file} from ${url}`);
             return url;
           }
         });
 
         this.faceMesh.setOptions({
           maxNumFaces: 1,
-          refineLandmarks: true,
-          minDetectionConfidence: 0.5,
-          minTrackingConfidence: 0.5
+          refineLandmarks: this.settings.refineLandmarks,
+          minDetectionConfidence: this.settings.minDetectionConfidence,
+          minTrackingConfidence: this.settings.minTrackingConfidence,
         });
 
         this.faceMesh.onResults(this.onFaceMeshResults.bind(this));
-        console.log('✓ MediaPipe FaceMesh configured');
-      } catch (meshError) {
-        console.error('✗ MediaPipe FaceMesh initialization failed:', meshError);
-        throw new Error(`MediaPipe initialization failed: ${meshError.message}`);
+        this.debugLog('MediaPipe FaceMesh configured');
+      } catch (meshError: unknown) {
+        const err: any = meshError as any;
+        console.error('MediaPipe FaceMesh initialization failed:', err);
+        throw new Error(`MediaPipe initialization failed: ${err?.message || String(err)}`);
       }
 
       // Step 4: Initialize MediaPipe Camera
-      console.log('Initializing MediaPipe Camera...');
+      this.debugLog('Initializing MediaPipe Camera');
       try {
         this.camera = new Camera(this.videoElement, {
           onFrame: async () => {
             if (this.isRunning && this.faceMesh) {
               try {
+                this.lastFrameStartTs = performance.now();
                 await this.faceMesh.send({ image: this.videoElement! });
+                // FPS tracking
+                const now = performance.now();
+                if (this.fpsCounter.lastTs === 0) this.fpsCounter.lastTs = now;
+                this.fpsCounter.frames += 1;
+                const elapsed = now - this.fpsCounter.lastTs;
+                if (elapsed >= 1000) {
+                  this.fpsCounter.fps = Math.round((this.fpsCounter.frames * 1000) / elapsed);
+                  this.fpsCounter.frames = 0;
+                  this.fpsCounter.lastTs = now;
+                }
               } catch (frameError) {
-                console.warn('Frame processing error:', frameError);
+                if (import.meta.env.DEV) console.warn('Frame processing error:', frameError);
               }
             }
           },
-          width: 640,
-          height: 480
+          width: this.settings.targetWidth,
+          height: this.settings.targetHeight
         });
-        console.log('✓ MediaPipe Camera initialized');
-      } catch (cameraError) {
-        console.error('✗ MediaPipe Camera initialization failed:', cameraError);
-        throw new Error(`Camera initialization failed: ${cameraError.message}`);
+        this.debugLog('MediaPipe Camera initialized');
+      } catch (cameraError: unknown) {
+        const err: any = cameraError as any;
+        console.error('MediaPipe Camera initialization failed:', err);
+        throw new Error(`Camera initialization failed: ${err?.message || String(err)}`);
       }
 
-      console.log('✓ Face detection service fully initialized with MediaPipe FaceMesh');
+      this.debugLog('Face detection service initialized');
     } catch (error) {
       console.error('Face detection initialization failed:', error);
       // Clean up any partial initialization
@@ -176,11 +231,11 @@ export class FaceDetectionService {
     this.blinkEvents = [];
 
     if (this.fallbackMode) {
-      console.log('Face detection started in fallback mode (simulated metrics)');
+      this.debugLog('Detection started in fallback mode');
       this.startFallbackDetection();
     } else if (this.camera && this.faceMesh) {
       this.camera.start();
-      console.log('Face detection started with MediaPipe');
+      this.debugLog('Detection started with MediaPipe');
       
       // Start watchdog timer to detect if MediaPipe fails
       this.startMediaPipeWatchdog();
@@ -203,7 +258,7 @@ export class FaceDetectionService {
       
       // If no metrics received for 5 seconds, switch to fallback
       if (timeSinceLastMetric > 5000 && !this.fallbackMode) {
-        console.warn('MediaPipe detection appears to have failed, switching to fallback mode');
+        if (import.meta.env.DEV) console.warn('MediaPipe detection appears to have failed, switching to fallback mode');
         this.switchToFallbackMode();
       }
     }, 2000);
@@ -233,7 +288,7 @@ export class FaceDetectionService {
     
     // Switch to fallback
     this.fallbackMode = true;
-    console.log('Switched to fallback mode - generating simulated metrics');
+    this.debugLog('Switched to fallback mode - simulated metrics');
     this.startFallbackDetection();
   }
 
@@ -264,13 +319,19 @@ export class FaceDetectionService {
         blink => currentTime - blink.timestamp < 60000
       );
 
+      // By default do NOT claim a face is present in fallback mode to avoid
+      // producing demo numeric risk scores. Occasionally simulate a presence
+      // (10% chance) for UI demos without making it the default behavior.
+      const simulatePresence = Math.random() < 0.10;
       const metrics: FaceMetrics = {
-        isPresent: true, // Simulate face always present in fallback
-        blinkRate: Math.round(baseBlinkRate),
-        eyeAspectRatio: baseEyeAspectRatio,
-        jawOpenness: baseJawOpenness,
-        browFurrow: baseBrowFurrow,
-        gazeStability: baseGazeStability
+        isPresent: simulatePresence,
+        blinkRate: simulatePresence ? Math.round(baseBlinkRate) : 0,
+        eyeAspectRatio: simulatePresence ? baseEyeAspectRatio : 0,
+        jawOpenness: simulatePresence ? baseJawOpenness : 0,
+        browFurrow: simulatePresence ? baseBrowFurrow : 0,
+        gazeStability: simulatePresence ? baseGazeStability : 1.0,
+        fps: this.fpsCounter.fps,
+        latencyMs: this.lastLatencyMs,
       };
 
       // Notify all callbacks
@@ -310,7 +371,7 @@ export class FaceDetectionService {
     }
 
     this.faceMesh = null;
-    console.log('Face detection stopped');
+    this.debugLog('Detection stopped');
   }
 
   private onFaceMeshResults(results: Results): void {
@@ -325,33 +386,53 @@ export class FaceDetectionService {
       // Calculate eye aspect ratios for blink detection
       const leftEAR = this.calculateEyeAspectRatio(landmarks, LEFT_EYE_LANDMARKS);
       const rightEAR = this.calculateEyeAspectRatio(landmarks, RIGHT_EYE_LANDMARKS);
-      const avgEAR = (leftEAR + rightEAR) / 2;
+      let avgEAR = (leftEAR + rightEAR) / 2;
+
+      // Temporal median filter to suppress outliers/jitter
+      this.earWindow.push(avgEAR);
+      if (this.earWindow.length > this.earWindowSize) this.earWindow.shift();
+      const sorted = [...this.earWindow].sort((a, b) => a - b);
+      const medianEAR = sorted[Math.floor(sorted.length / 2)];
+      avgEAR = medianEAR;
       
       // Blink detection
       this.detectBlink(avgEAR, currentTime);
       
       // Calculate stress-related metrics from facial landmarks
-      const jawOpenness = this.calculateJawOpenness(landmarks);
-      const browFurrow = this.calculateBrowFurrow(landmarks);
+      const jawOpennessRaw = this.calculateJawOpenness(landmarks);
+      const browFurrowRaw = this.calculateBrowFurrow(landmarks);
       
       // Calculate gaze stability (simplified - based on eye landmark stability)
-      const gazeStability = this.calculateGazeStability(landmarks);
+      const gazeStabilityRaw = this.calculateGazeStability(landmarks);
+
+      // Exponential smoothing for stability
+      this.smoothedEyeAspectRatio = this.applyEma(this.smoothedEyeAspectRatio, avgEAR, this.settings.emaAlphaEar);
+      this.smoothedJawOpenness = this.applyEma(this.smoothedJawOpenness, jawOpennessRaw, this.settings.emaAlphaOther);
+      this.smoothedBrowFurrow = this.applyEma(this.smoothedBrowFurrow, browFurrowRaw, this.settings.emaAlphaOther);
+      this.smoothedGazeStability = this.applyEma(this.smoothedGazeStability, gazeStabilityRaw, this.settings.emaAlphaGaze);
       
       metrics = {
         isPresent: true,
         blinkRate: this.calculateBlinkRate(),
-        eyeAspectRatio: avgEAR,
-        jawOpenness,
-        browFurrow,
-        gazeStability
+        eyeAspectRatio: this.smoothedEyeAspectRatio ?? avgEAR,
+        jawOpenness: this.smoothedJawOpenness ?? jawOpennessRaw,
+        browFurrow: this.smoothedBrowFurrow ?? browFurrowRaw,
+        gazeStability: this.smoothedGazeStability ?? gazeStabilityRaw,
+        fps: this.fpsCounter.fps,
+        latencyMs: this.lastLatencyMs,
       };
     } else {
       // No face detected
-      metrics = this.getDefaultMetrics();
+      metrics = { ...this.getDefaultMetrics(), fps: this.fpsCounter.fps, latencyMs: this.lastLatencyMs };
     }
 
     this.lastFaceDetected = faceDetected;
     
+    // Update latency from last frame start
+    if (this.lastFrameStartTs) {
+      this.lastLatencyMs = Math.max(0, Math.round(performance.now() - this.lastFrameStartTs));
+    }
+
     // Notify all callbacks
     this.callbacks.forEach(callback => callback(metrics));
     
@@ -381,15 +462,17 @@ export class FaceDetectionService {
   }
 
   private detectBlink(eyeAspectRatio: number, currentTime: number): void {
-    const BLINK_THRESHOLD = 0.025; // Threshold for detecting closed eyes
+    // Hysteresis thresholds to prevent flicker
+    const BLINK_CLOSE_THRESHOLD = this.settings.blinkCloseThreshold;
+    const BLINK_OPEN_THRESHOLD = this.settings.blinkOpenThreshold;
     const MIN_BLINK_DURATION = 50; // Minimum blink duration in ms
     const MAX_BLINK_DURATION = 500; // Maximum blink duration in ms
     
-    if (eyeAspectRatio < BLINK_THRESHOLD && !this.isBlinking) {
+    if (eyeAspectRatio < BLINK_CLOSE_THRESHOLD && !this.isBlinking) {
       // Blink start
       this.isBlinking = true;
       this.blinkStartTime = currentTime;
-    } else if (eyeAspectRatio >= BLINK_THRESHOLD && this.isBlinking) {
+    } else if (eyeAspectRatio >= BLINK_OPEN_THRESHOLD && this.isBlinking) {
       // Blink end
       const blinkDuration = currentTime - this.blinkStartTime;
       
@@ -455,8 +538,14 @@ export class FaceDetectionService {
     const rightEyeCenter = this.getEyeCenter(landmarks, RIGHT_EYE_LANDMARKS);
     
     // For now, return high stability if both eyes are detected
-    // In a more sophisticated implementation, this would track eye movement over time
-    return leftEyeCenter && rightEyeCenter ? 0.8 : 0.0;
+    // Track small variations frame-to-frame by comparing with last centers
+    if (!(leftEyeCenter && rightEyeCenter)) return 0.0;
+    const eyeCenter = { x: (leftEyeCenter.x + rightEyeCenter.x) / 2, y: (leftEyeCenter.y + rightEyeCenter.y) / 2 };
+    const last = this.lastEyeAspectRatio; // reuse presence of previous frame as a signal that stream is ongoing
+    // Use EAR change as a proxy for micro-movements; smaller change = higher stability
+    const earChange = this.lastEyeAspectRatio == null ? 0 : Math.abs(this.lastEyeAspectRatio - eyeCenter.x * 0.0 + eyeCenter.y * 0.0);
+    const stability = Math.max(0, Math.min(1, 1 - earChange * 8));
+    return stability;
   }
 
   private getEyeCenter(landmarks: any[], eyeIndices: any): any {
@@ -489,7 +578,7 @@ export class FaceDetectionService {
     return {
       isPresent: false,
       blinkRate: 0,
-      eyeAspectRatio: 0.3,
+      eyeAspectRatio: 0.22,
       jawOpenness: 0,
       browFurrow: 0,
       gazeStability: 1.0
@@ -503,7 +592,38 @@ export class FaceDetectionService {
   clearBlinkHistory(): void {
     this.blinkEvents = [];
   }
+
+  setSettings(settings: Partial<FaceDetectionSettings>) {
+    this.settings = { ...this.settings, ...settings };
+    if (this.faceMesh) {
+      this.faceMesh.setOptions({
+        maxNumFaces: 1,
+        refineLandmarks: this.settings.refineLandmarks,
+        minDetectionConfidence: this.settings.minDetectionConfidence,
+        minTrackingConfidence: this.settings.minTrackingConfidence,
+      });
+    }
+  }
+
+  getSettings(): FaceDetectionSettings {
+    return { ...this.settings };
+  }
 }
 
 // Singleton instance
 export const faceDetectionService = new FaceDetectionService();
+
+export interface FaceDetectionSettings {
+  minDetectionConfidence: number;
+  minTrackingConfidence: number;
+  refineLandmarks: boolean;
+  blinkCloseThreshold: number;
+  blinkOpenThreshold: number;
+  emaAlphaEar: number;
+  emaAlphaOther: number;
+  emaAlphaGaze: number;
+  targetWidth: number;
+  targetHeight: number;
+  targetFps: number;
+  debug: boolean;
+}

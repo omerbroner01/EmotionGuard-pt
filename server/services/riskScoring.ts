@@ -150,9 +150,26 @@ export class RiskScoringService {
       return { score: 0, confidence: 0, reactionTimeElevated: false, accuracyLow: false };
     }
 
-    const trials = signals.stroopTrials;
+    // Validate and filter invalid trials
+    const validTrials = signals.stroopTrials.filter(trial => 
+      typeof trial.reactionTimeMs === 'number' && 
+      !isNaN(trial.reactionTimeMs) && 
+      isFinite(trial.reactionTimeMs) &&
+      trial.reactionTimeMs > 0 && 
+      trial.reactionTimeMs < 10000 // Max 10 seconds
+    );
+    
+    if (validTrials.length === 0) {
+      return { score: 0, confidence: 0, reactionTimeElevated: false, accuracyLow: false };
+    }
+
+    // Use validated trials
+    const trials = validTrials;
     const avgReactionTime = trials.reduce((sum, trial) => sum + trial.reactionTimeMs, 0) / trials.length;
     const accuracy = trials.filter(trial => trial.correct).length / trials.length;
+
+    // Cap and normalize reaction time between 200ms and 2000ms
+    const normalizedReactionTime = Math.min(2000, Math.max(200, avgReactionTime));
 
     let riskScore = 0;
     let reactionTimeElevated = false;

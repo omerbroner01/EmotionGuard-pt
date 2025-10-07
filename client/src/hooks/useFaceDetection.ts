@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { faceDetectionService, type FaceMetrics, type BlinkEvent } from '@/lib/faceDetection';
+import { faceDetectionService, type FaceMetrics, type BlinkEvent, type FaceDetectionSettings } from '@/lib/faceDetection';
 
 export interface FaceDetectionHook {
   metrics: FaceMetrics | null;
@@ -10,6 +10,8 @@ export interface FaceDetectionHook {
   startDetection: () => Promise<void>;
   stopDetection: () => void;
   clearHistory: () => void;
+  updateSettings: (settings: Partial<FaceDetectionSettings>) => void;
+  settings: FaceDetectionSettings;
 }
 
 export function useFaceDetection(): FaceDetectionHook {
@@ -18,6 +20,7 @@ export function useFaceDetection(): FaceDetectionHook {
   const [isInitialized, setIsInitialized] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [blinkHistory, setBlinkHistory] = useState<BlinkEvent[]>([]);
+  const [settings, setSettings] = useState<FaceDetectionSettings>(faceDetectionService.getSettings());
 
   const updateMetrics = useCallback((newMetrics: FaceMetrics) => {
     setMetrics(newMetrics);
@@ -57,6 +60,11 @@ export function useFaceDetection(): FaceDetectionHook {
     setBlinkHistory([]);
   }, []);
 
+  const updateSettings = useCallback((partial: Partial<FaceDetectionSettings>) => {
+    faceDetectionService.setSettings(partial);
+    setSettings(faceDetectionService.getSettings());
+  }, []);
+
   // Cleanup on unmount
   useEffect(() => {
     return () => {
@@ -74,6 +82,8 @@ export function useFaceDetection(): FaceDetectionHook {
     blinkHistory,
     startDetection,
     stopDetection,
-    clearHistory
+    clearHistory,
+    updateSettings,
+    settings,
   };
 }

@@ -112,6 +112,49 @@ export class EmotionGuardService {
     signals: AssessmentSignals,
     fastMode = false
   ): Promise<AssessmentResult> {
+    // If no meaningful signals were provided, avoid computing a final score
+    // which can produce misleading demo values. Create a placeholder
+    // assessment and return a pending response so the client can collect
+    // signals and update the assessment later.
+    const hasSignals = !!(
+      (signals.mouseMovements && signals.mouseMovements.length > 0) ||
+      (signals.keystrokeTimings && signals.keystrokeTimings.length > 0) ||
+      (signals.stroopTrials && signals.stroopTrials.length > 0) ||
+      (signals.stressLevel !== undefined && signals.stressLevel !== null) ||
+      (signals.facialMetrics && signals.facialMetrics.isPresent) ||
+      signals.voiceProsodyFeatures
+    );
+
+    if (!hasSignals) {
+      // Create lightweight placeholder assessment and return pending status
+      const policy = await storage.getDefaultPolicy();
+      const placeholder = await storage.createAssessment({
+        userId,
+        policyId: policy.id,
+        orderContext,
+        quickCheckDurationMs: 0,
+        stroopTestResults: null,
+        selfReportStress: null,
+        behavioralMetrics: {},
+        voiceProsodyScore: null,
+        facialExpressionScore: null,
+        riskScore: null as any,
+        verdict: 'pending' as any,
+        reasonTags: [],
+      } as any);
+
+      return {
+        assessmentId: placeholder.id,
+        // Mark as pending to ensure callers don't treat this as a final numeric score
+        pending: true as any,
+        verdict: 'pending' as any,
+        reasonTags: [],
+        confidence: 0,
+        recommendedAction: 'Assessment pending',
+        cooldownDuration: undefined,
+        interventionRecommendations: undefined,
+      } as any;
+    }
     // Get user baseline and policy
     const [baseline, policy] = await Promise.all([
       storage.getUserBaseline(userId),
@@ -139,10 +182,16 @@ export class EmotionGuardService {
           })) || [],
           facialMetrics: signals.facialMetrics ? [{
             timestamp: Date.now(),
-            eyeBlinkRate: signals.facialMetrics.eyeBlinkRate || 15,
-            browFurrowing: signals.facialMetrics.browFurrowing || 0.3,
-            jawTension: signals.facialMetrics.jawTension || 0.2,
-            headStability: signals.facialMetrics.headStability || 0.8
+            // keep new normalized names
+            blinkRate: signals.facialMetrics.blinkRate ?? 15,
+            browFurrow: signals.facialMetrics.browFurrow ?? 0.3,
+            jawOpenness: signals.facialMetrics.jawOpenness ?? 0.2,
+            gazeStability: signals.facialMetrics.gazeStability ?? 0.8,
+            // include legacy field names expected by downstream predictive service
+            eyeBlinkRate: signals.facialMetrics.blinkRate ?? 15,
+            browFurrowing: signals.facialMetrics.browFurrow ?? 0.3,
+            jawTension: signals.facialMetrics.jawOpenness ?? 0.2,
+            headStability: signals.facialMetrics.gazeStability ?? 0.8,
           }] : [],
           cognitiveLoad: signals.stroopTrials ? [{
             timestamp: Date.now(),
@@ -189,8 +238,8 @@ export class EmotionGuardService {
         this.calculateFacialExpressionScoreFromMetrics(signals.facialMetrics) : 
         signals.facialExpressionFeatures ?
           this.calculateFacialExpressionScore(signals.facialExpressionFeatures) : null,
-      riskScore: 0, // Will be calculated
-      verdict: 'go', // Will be determined
+      riskScore: null,
+      verdict: 'pending',
       reasonTags: [],
     });
 
@@ -215,17 +264,45 @@ export class EmotionGuardService {
       userId  // Enable intelligent pattern recognition
     );
 
+    // If the scoring confidence is very low, treat this as a pending assessment
+    // so we don't provide misleading numeric results based on weak/contextual data.
+    if ((riskResult.confidence || 0) < 0.25) {
+      // mark assessment as pending and avoid returning a numeric score
+      await storage.updateAssessment(assessment.id, {
+        riskScore: null as any,
+        verdict: 'pending' as any,
+      });
+
+      return {
+        assessmentId: assessment.id,
+        // indicate pending; do NOT include a numeric riskScore so clients won't display a false score
+        pending: true as any,
+        verdict: 'pending' as any,
+        reasonTags: [],
+        confidence: riskResult.confidence,
+        recommendedAction: 'Assessment pending',
+        cooldownDuration: undefined,
+        interventionRecommendations: undefined,
+      } as any;
+    }
+
     // Determine verdict based on risk score and policy
     const verdict = this.determineVerdict(riskResult.riskScore, policy);
     const reasonTags = this.generateReasonTags(riskResult, signals, baseline);
 
     // Update assessment with results
-    const updatedAssessment = await storage.updateAssessment(assessment.id, {
-      riskScore: riskResult.riskScore,
-      verdict,
-      reasonTags,
-      confidence: riskResult.confidence,
-    });
+    // Only update with valid risk scores
+    if (typeof riskResult.riskScore === 'number' && !isNaN(riskResult.riskScore)) {
+      await storage.updateAssessment(assessment.id, {
+        riskScore: riskResult.riskScore,
+        verdict,
+        reasonTags,
+        confidence: riskResult.confidence || 0,
+      });
+    } else {
+      console.error('Invalid risk score received:', riskResult);
+      throw new Error('Invalid risk score calculated');
+    }
 
     // Log audit event and create real-time event in parallel
     await Promise.all([
@@ -380,7 +457,17 @@ export class EmotionGuardService {
 
     // Process facial metrics if provided
     if (facialMetrics) {
-      facialExpressionScore = this.calculateFacialExpressionScoreFromMetrics(facialMetrics);
+      // Clamp and validate incoming facial metrics to safe ranges before scoring
+      const safeMetrics = {
+        isPresent: !!facialMetrics.isPresent,
+        blinkRate: Math.max(0, Math.min(60, facialMetrics.blinkRate || 0)),
+        eyeAspectRatio: Math.max(0, Math.min(1, facialMetrics.eyeAspectRatio || 0)),
+        jawOpenness: Math.max(0, Math.min(1, facialMetrics.jawOpenness || 0)),
+        browFurrow: Math.max(0, Math.min(1, facialMetrics.browFurrow || 0)),
+        gazeStability: Math.max(0, Math.min(1, facialMetrics.gazeStability || 0)),
+      };
+
+      facialExpressionScore = this.calculateFacialExpressionScoreFromMetrics(safeMetrics as any);
       console.log('🧮 Calculated facialExpressionScore:', facialExpressionScore);
       
       updateData.facialMetrics = facialMetrics;
@@ -404,26 +491,28 @@ export class EmotionGuardService {
     // Update the assessment with new data
     await storage.updateAssessment(assessmentId, updateData);
 
-    // CRITICAL: Recalculate risk score if stress level was updated
-    if (stressLevel !== undefined) {
+    // CRITICAL: Recalculate risk score only if we have a valid assessment and
+    // the update contains meaningful information (stressLevel or facial metrics)
+    if ((stressLevel !== undefined) || (facialMetrics)) {
       const assessment = await storage.getAssessment(assessmentId);
       if (assessment) {
         // Map assessment data to signals format for risk calculation
         const signals: AssessmentSignals = {
-          stressLevel: assessment.selfReportStress,
-          behavioralMetrics: assessment.behavioralMetrics,
-          facialMetrics: assessment.facialMetrics,
-          voiceProsodyScore: assessment.voiceProsodyScore,
-          stroopResults: assessment.stroopTestResults,
+          stressLevel: (assessment.selfReportStress ?? undefined) as any,
+          mouseMovements: (assessment.behavioralMetrics && (assessment.behavioralMetrics as any).mouseMovements) || undefined,
+          keystrokeTimings: (assessment.behavioralMetrics && (assessment.behavioralMetrics as any).keystrokeTimings) || undefined,
+          facialMetrics: (assessment.facialMetrics as any) || undefined,
+          voiceProsodyFeatures: (assessment.voiceProsodyScore !== undefined) ? { pitch: 0, jitter: 0, shimmer: 0, energy: assessment.voiceProsodyScore } : undefined as any,
+          stroopTrials: assessment.stroopTestResults as any,
         };
         
         const baseline = await storage.getUserBaseline(assessment.userId);
         const policy = await storage.getPolicy(assessment.policyId);
         
         const riskResult = await this.riskScoring.calculateRiskScore(
-          signals, 
+          signals,
           baseline || undefined,
-          assessment.orderContext,
+          (assessment.orderContext as any) || undefined,
           policy || undefined
         );
         

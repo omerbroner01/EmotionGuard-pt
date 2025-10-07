@@ -236,8 +236,8 @@ export class AlertSystemService {
 
     await storage.updateAlertHistory(createdAlert.id, {
       channelsTriggered,
-      deliveryCompletedAt: new Date()
-    });
+      deliveryStatus: { completedAt: new Date().toISOString() }
+    } as any);
 
     console.log(`📬 Alert ${createdAlert.id} delivered through channels: ${channelsTriggered.join(', ')}`);
 

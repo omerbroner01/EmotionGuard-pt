@@ -45,6 +45,30 @@ export function StroopTest({ onComplete }: StroopTestProps) {
     generateTrial();
   }, [generateTrial]);
 
+  // Keyboard support: map Digit1..4 to color buttons and prevent default for Space
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      // Prevent page scrolling on Space while test is active
+      if (event.code === 'Space') {
+        event.preventDefault();
+        return;
+      }
+
+      // Accept Digit1..Digit4 for quick answers
+      if (event.code && event.code.startsWith('Digit')) {
+        const idx = parseInt(event.code.replace('Digit', ''), 10) - 1;
+        if (idx >= 0 && idx < COLOR_BUTTONS.length) {
+          // map to the button value
+          const value = COLOR_BUTTONS[idx].value;
+          handleAnswer(value);
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [trialStartTime, currentWord, currentColorName, results]);
+
   const handleAnswer = (response: string) => {
     const reactionTime = performance.now() - trialStartTime;
     const correct = response.toUpperCase() === currentColorName;
@@ -99,6 +123,7 @@ export function StroopTest({ onComplete }: StroopTestProps) {
           ))}
         </div>
       </div>
+      <div className="text-xs text-muted-foreground mt-2">Hint: You can press keys 1-4 to choose the corresponding color.</div>
       
       <div className="text-sm text-muted-foreground">
         Trial <span data-testid="text-trialnumber">{currentTrial}</span> of 5

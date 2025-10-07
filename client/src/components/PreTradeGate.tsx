@@ -3,6 +3,7 @@ import { Dialog, DialogContent } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { StroopTest } from './StroopTest';
+import ErrorBoundary from '@/components/ui/error-boundary';
 import { AdvancedCognitiveAssessment } from './AdvancedCognitiveAssessment';
 import { BreathingExercise } from './BreathingExercise';
 import { RiskDisplay } from './RiskDisplay';
@@ -52,6 +53,9 @@ export function PreTradeGate({
   resetAssessment
 }: PreTradeGateProps) {
   const [currentPhase, setCurrentPhase] = useState<AssessmentPhase>('quickCheck');
+  // Local submit guard to prevent double-submit/double-navigation
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const [quickCheckProgress, setQuickCheckProgress] = useState(0);
   const [stroopResults, setStroopResults] = useState<StroopTrial[]>([]);
   const [cognitiveResults, setCognitiveResults] = useState<CognitiveTestResult[]>([]);
@@ -66,42 +70,41 @@ export function PreTradeGate({
   useEffect(() => {
     if (currentPhase === 'quickCheck') {
       console.log('⏱️ Starting optimized quick check...');
-      
-      // Faster progress updates for B2B demo (target ≤1.5s)
+
       const progressSteps = [
         { progress: 20, message: 'Initializing biometric sensors...', delay: 200 },
         { progress: 50, message: 'Analyzing behavioral patterns...', delay: 300 },
         { progress: 80, message: 'Processing facial metrics...', delay: 400 },
         { progress: 100, message: 'Assessment complete', delay: 200 }
       ];
-      
+
       let stepIndex = 0;
+      const timers: number[] = [];
+
       const runNextStep = () => {
         if (stepIndex < progressSteps.length) {
           const step = progressSteps[stepIndex];
           setQuickCheckProgress(step.progress);
           console.log(`📊 Progress: ${step.progress}% - ${step.message}`);
-          
-          stepIndex++;
-          if (stepIndex < progressSteps.length) {
-            setTimeout(runNextStep, step.delay);
-          } else {
-            // Complete quick check and advance
-            setTimeout(() => {
-              const needsDeepCheck = Math.random() > 0.6; // 40% chance for demo
-              if (needsDeepCheck) {
-                console.log('🧠 Deep assessment needed - proceeding to Stroop test');
-                setCurrentPhase('stroopTest');
-              } else {
-                setCurrentPhase('selfReport');
-              }
-            }, 500);
-          }
-        };
+
+          const t = window.setTimeout(() => {
+            stepIndex++;
+            runNextStep();
+          }, step.delay);
+          timers.push(t as unknown as number);
+        } else {
+          // Deterministic: always go to Stroop test to avoid flaky behavior
+          const finalT = window.setTimeout(() => {
+            console.log('🧠 Proceeding to Stroop test (deterministic)');
+            setCurrentPhase('stroopTest');
+          }, 500);
+          timers.push(finalT as unknown as number);
+        }
       };
-      
-      // Start the first step
+
       runNextStep();
+
+      return () => timers.forEach(t => clearTimeout(t));
     }
   }, [currentPhase]);
 
@@ -112,10 +115,26 @@ export function PreTradeGate({
 
   const handleAdvancedCognitiveComplete = (results: CognitiveTestResult[]) => {
     console.log('🧠 Advanced cognitive assessment completed:', results);
-    setCognitiveResults(results);
+
+    // Validate results before accepting completion
+    const validResults = results.filter(result => 
+      result && 
+      typeof result.overallScore === 'number' && 
+      Array.isArray(result.trials) && 
+      result.trials.length > 0 &&
+      result.trials.every(t => t && typeof t.reactionTimeMs === 'number' && typeof t.correct === 'boolean')
+    );
+
+    if (validResults.length !== results.length) {
+      console.error('Invalid cognitive test results detected');
+      setSubmitError('Error: Invalid test results. Please retry the assessment.');
+      return;
+    }
+
+    setCognitiveResults(validResults);
     
     // Extract Stroop results for backward compatibility
-    const stroopTest = results.find(r => r.testType === 'stroop');
+    const stroopTest = validResults.find(r => r.testType === 'stroop');
     if (stroopTest) {
       const stroopTrials: StroopTrial[] = stroopTest.trials.map(trial => ({
         word: trial.stimulus,
@@ -131,31 +150,85 @@ export function PreTradeGate({
   };
 
   const handleSelfReportComplete = async () => {
-    console.log('📝 handleSelfReportComplete called');
+    if (import.meta.env.DEV && import.meta.env.VITE_DEBUG) console.log('handleSelfReportComplete');
     console.log('📝 currentAssessment exists:', !!currentAssessment);
     console.log('📝 facialMetrics:', facialMetrics);
     
     // CRITICAL: Don't proceed until assessment is created and currentAssessment exists
     if (!currentAssessment) {
-      console.log('⏳ Assessment not ready yet - waiting for assessment creation to complete...');
-      // Show a brief loading state and return early
+      console.warn('Assessment not ready yet - redirecting to a safe state');
+      // Redirect to a safe state and inform user
+      // Use onClose to back out if available
+      try {
+        // show a brief delay so user sees message in UI (could be a toast in real app)
+        setCurrentPhase('selfReport');
+      } catch (e) {
+        console.error('Failed to handle missing assessment state', e);
+      }
       return;
     }
-    
+
+    if (isSubmitting || isAssessing) {
+      if (import.meta.env.DEV && import.meta.env.VITE_DEBUG) console.log('submission already in progress');
+      return;
+    }
+
+    // Use the shared attempt function so Retry can reuse the same logic
+    await attemptAssessmentUpdate();
+  };
+
+    // Shared update attempt used by Continue and Retry flows
+  const attemptAssessmentUpdate = async () => {
+    setIsSubmitting(true);
+    setSubmitError(null);
     try {
-      // Always update assessment with stress level and any available data
-      console.log('📝 Updating assessment with stress level:', stressLevel[0], 'cognitive results:', cognitiveResults.length, 'and facial metrics:', !!facialMetrics);
-      await updateAssessment(stroopResults, stressLevel[0], facialMetrics, cognitiveResults);
-      
-      // Proceed to risk results only if we have a valid assessment
-      console.log('📝 Proceeding to risk results with assessment:', currentAssessment.assessmentId);
-      setCurrentPhase('riskResults');
+      // CRITICAL FIX #1: Only show "pending" if tests are actually incomplete
+      // Check if we have valid cognitive results before proceeding
+      const hasValidCognitiveResults = cognitiveResults && 
+                                       cognitiveResults.length > 0 && 
+                                       cognitiveResults.every(test => test && 
+                                         typeof test.overallScore === 'number' && 
+                                         Array.isArray(test.trials) && 
+                                         test.trials.length > 0);
+
+      if (!hasValidCognitiveResults) {
+        setSubmitError('Assessment is pending — please complete the remaining tests.');
+        setCurrentPhase('selfReport');
+        return null;
+      }
+
+      if (import.meta.env.DEV && import.meta.env.VITE_DEBUG) console.log('updateAssessment payload', { stress: stressLevel[0], cog: cognitiveResults.length, hasFace: !!facialMetrics });
+      const result = await updateAssessment(stroopResults, stressLevel[0], facialMetrics, cognitiveResults);
+
+      // FIX: Set completed=true atomically on success, proceed to results
+      if (result && typeof result.riskScore === 'number') {
+        console.log('✅ Assessment complete with score:', result.riskScore);
+        setCurrentPhase('riskResults');
+        return result;
+      }
+
+      // If server returns pending after we sent valid data, show error
+      if (!result || (result as any).pending) {
+        setSubmitError('Error processing assessment results. Please retry.');
+        setCurrentPhase('selfReport');
+        return result;
+      }
+
+      setSubmitError('Unexpected response from the assessment service. Please retry.');
+      setCurrentPhase('selfReport');
+      return result;
     } catch (error) {
       console.error('Assessment update failed:', error);
-      // Even if update fails, proceed to results if we have an assessment
-      console.log('📝 Update failed but assessment exists - proceeding to results anyway');
-      setCurrentPhase('riskResults');
+      setSubmitError('Failed to update assessment — please try again.');
+      setCurrentPhase('selfReport');
+      return null;
+    } finally {
+      setIsSubmitting(false);
     }
+  };
+
+  const handleRetryAssessment = async () => {
+    await attemptAssessmentUpdate();
   };
 
   const handleFacialMetrics = (metrics: FaceMetrics) => {
@@ -164,15 +237,15 @@ export function PreTradeGate({
 
   // Debug current assessment changes (removed auto-progression - user must complete self-report manually)
   useEffect(() => {
-    console.log('🔍 useEffect triggered: currentAssessment=', !!currentAssessment, ', currentPhase=', currentPhase);
-    if (currentAssessment) {
-      console.log('🔧 PreTradeGate: currentAssessment changed to:', currentAssessment.assessmentId);
+    if (import.meta.env.DEV && import.meta.env.VITE_DEBUG) {
+      console.log('PreTradeGate effect', { hasAssessment: !!currentAssessment, currentPhase });
+      if (currentAssessment) console.log('PreTradeGate assessmentId', currentAssessment.assessmentId);
     }
   }, [currentAssessment, currentPhase]);
 
   // Debug current assessment changes
   useEffect(() => {
-    console.log('🔧 PreTradeGate: currentAssessment changed to:', currentAssessment ? currentAssessment.assessmentId : 'null');
+    if (import.meta.env.DEV && import.meta.env.VITE_DEBUG) console.log('PreTradeGate assessment changed', currentAssessment ? currentAssessment.assessmentId : 'null');
   }, [currentAssessment]);
 
   const handleProceedWithTrade = async () => {
@@ -344,20 +417,48 @@ export function PreTradeGate({
                 <span className="text-sm text-muted-foreground">/10</span>
               </div>
             </div>
-            
-            <Button 
-              onClick={handleSelfReportComplete}
-              className="w-full"
-              disabled={isAssessing}
-              data-testid="button-continue"
-            >
-              {isAssessing ? 'Processing...' : 'Continue'}
-            </Button>
+            {submitError ? (
+              <div className="text-sm text-red-600 mb-4" role="alert">{submitError}</div>
+            ) : null}
+
+            <div className="flex space-x-2">
+              <Button 
+                onClick={handleSelfReportComplete}
+                className="flex-1"
+                disabled={isAssessing || isSubmitting}
+                data-testid="button-continue"
+              >
+                {isAssessing || isSubmitting ? 'Processing...' : 'Continue'}
+              </Button>
+              <Button 
+                variant="outline"
+                onClick={handleRetryAssessment}
+                disabled={isAssessing || isSubmitting}
+                className="flex-none"
+                data-testid="button-retry"
+              >
+                Retry
+              </Button>
+            </div>
           </div>
         );
 
-      case 'riskResults':
-        return currentAssessment ? (
+            case 'riskResults':
+        // FIX #1: Only show pending if assessment doesn't have a valid risk score
+        // This ensures we compute and display scores after all tests are complete
+        if (!currentAssessment || typeof currentAssessment.riskScore !== 'number') {
+          return (
+            <div className="text-center p-6">
+              <h3 className="text-lg font-semibold mb-2">Assessment in progress</h3>
+              <p className="text-sm text-muted-foreground">Please finish the cognitive & self-report tests to generate a risk score.</p>
+              <div className="mt-4">
+                <Button onClick={() => setCurrentPhase('selfReport')}>Complete Self-Report</Button>
+              </div>
+            </div>
+          );
+        }
+
+        return (
           <RiskDisplay
             assessment={currentAssessment}
             onProceed={handleProceedWithTrade}
@@ -365,10 +466,6 @@ export function PreTradeGate({
             onBlock={handleShowJournal}
             onOverride={handleShowOverride}
           />
-        ) : (
-          <div className="text-center">
-            <p>Processing assessment...</p>
-          </div>
         );
 
       case 'breathingExercise':

@@ -6,6 +6,7 @@ import { NLPAnalysisService } from "./services/nlpAnalysis";
 import { AdaptiveBaselineLearningService } from "./services/adaptiveBaselineLearning";
 import { WebSocketServer, WebSocket } from "ws";
 import { z } from "zod";
+import { randomUUID } from 'node:crypto';
 
 // Request validation schemas
 const checkTradeSchema = z.object({
@@ -124,6 +125,15 @@ const baselineSchema = z.object({
   keystrokeRhythm: z.number(),
 });
 
+const facialMetricsSchema = z.object({
+  isPresent: z.boolean(),
+  blinkRate: z.number().min(0).max(60),
+  eyeAspectRatio: z.number().min(0).max(1),
+  jawOpenness: z.number().min(0).max(1),
+  browFurrow: z.number().min(0).max(1),
+  gazeStability: z.number().min(0).max(1),
+});
+
 const policyUpdateSchema = z.object({
   name: z.string().optional(),
   strictnessLevel: z.enum(['lenient', 'standard', 'strict', 'custom']).optional(),
@@ -142,11 +152,66 @@ const policyUpdateSchema = z.object({
 });
 
 export async function registerRoutes(app: Express): Promise<Server> {
-  const emotionGuard = new EmotionGuardService();
-  const nlpAnalysis = new NLPAnalysisService();
-  const adaptiveLearning = new AdaptiveBaselineLearningService();
+  // Heavy services (AI, NLP, adaptive learning) can be disabled for a
+  // minimal boot to isolate startup crashes. Control via env vars:
+  // ENABLE_EMOTION_GUARD, ENABLE_NLP_ANALYSIS, ENABLE_ADAPTIVE_LEARNING
+  const makeNoopEmotionGuard = () => ({
+    checkBeforeTrade: async (_userId: string, _orderContext: any, _signals: any, _fastMode = false) => ({ assessmentId: 'dev', verdict: 'allow', pending: true }),
+    recordCooldownCompletion: async () => {},
+    recordJournalEntry: async () => {},
+    recordOverride: async () => {},
+    recordTradeOutcome: async () => {},
+  });
+
+  const makeNoopNLP = () => ({ analyzeJournalEntry: async (_trigger: string, _plan: string, _entry?: string) => ({ sentiment: 'neutral' }) });
+  const makeNoopAdaptive = () => ({ analyzeAndOptimizeBaseline: async () => ({}), updateBaselineFromLearning: async () => null });
+
+  let emotionGuard: any;
+  let nlpAnalysis: any;
+  let adaptiveLearning: any;
+
+  if (process.env.ENABLE_EMOTION_GUARD === 'false') {
+    emotionGuard = makeNoopEmotionGuard();
+    console.log('EmotionGuardService disabled via ENABLE_EMOTION_GUARD=false');
+  } else {
+    try {
+      emotionGuard = new EmotionGuardService();
+    } catch (e) {
+      console.error('EmotionGuardService failed to initialize, using noop fallback', e);
+      emotionGuard = makeNoopEmotionGuard();
+    }
+  }
+
+  if (process.env.ENABLE_NLP_ANALYSIS === 'false') {
+    nlpAnalysis = makeNoopNLP();
+    console.log('NLPAnalysisService disabled via ENABLE_NLP_ANALYSIS=false');
+  } else {
+    try {
+      nlpAnalysis = new NLPAnalysisService();
+    } catch (e) {
+      console.error('NLPAnalysisService failed to initialize, using noop fallback', e);
+      nlpAnalysis = makeNoopNLP();
+    }
+  }
+
+  if (process.env.ENABLE_ADAPTIVE_LEARNING === 'false') {
+    adaptiveLearning = makeNoopAdaptive();
+    console.log('AdaptiveBaselineLearningService disabled via ENABLE_ADAPTIVE_LEARNING=false');
+  } else {
+    try {
+      adaptiveLearning = new AdaptiveBaselineLearningService();
+    } catch (e) {
+      console.error('AdaptiveBaselineLearningService failed to initialize, using noop fallback', e);
+      adaptiveLearning = makeNoopAdaptive();
+    }
+  }
   
   const httpServer = createServer(app);
+
+  // In-memory store for placeholder assessments created when no DB or signals exist.
+  // This is intentionally lightweight and used for demo/test flows where the
+  // persistent DB may be unavailable or the adapter doesn't return inserted rows.
+  const placeholderAssessments = new Map<string, any>();
   
   // WebSocket server for real-time updates
   const wss = new WebSocketServer({ server: httpServer, path: '/ws' });
@@ -173,24 +238,134 @@ export async function registerRoutes(app: Express): Promise<Server> {
   };
 
   // Core EmotionGuard API endpoints
+  // Health check - lightweight endpoint for client-side verification
+  app.get('/health', async (req, res) => {
+    try {
+      res.json({ status: 'ok', uptime: process.uptime(), timestamp: Date.now() });
+    } catch (error) {
+      res.status(500).json({ status: 'error' });
+    }
+  });
+
   app.post('/api/emotion-guard/check-trade', async (req, res) => {
     try {
       const userId = req.body.userId || 'demo-user'; // In production, get from auth
       const { orderContext, signals, fastMode = false } = checkTradeSchema.parse(req.body);
-      
-      const result = await emotionGuard.checkBeforeTrade(userId, orderContext, signals, fastMode);
-      
-      // Broadcast real-time event
-      broadcastEvent({
-        type: 'assessment_completed',
-        data: {
+      // If running in fastMode and no useful signals were provided, create a placeholder
+      // assessment and return a pending response instead of computing a full risk score.
+      const hasSignals = !!(
+        (signals.mouseMovements && signals.mouseMovements.length > 0) ||
+        (signals.keystrokeTimings && signals.keystrokeTimings.length > 0) ||
+        (signals.stroopTrials && signals.stroopTrials.length > 0) ||
+        (signals.stressLevel !== undefined && signals.stressLevel !== null) ||
+        (signals.facialMetrics && signals.facialMetrics.isPresent)
+      );
+
+  // If no meaningful signals were provided at all, return a placeholder
+  // pending assessment so the client can collect interactive tests first.
+  if (!hasSignals) {
+        // Create a lightweight assessment record and return its id so the client can
+        // continue with the interactive tests. The server will compute the final
+        // score only when the client updates the assessment with real signals.
+        const policy = await storage.getDefaultPolicy();
+        const placeholderId = randomUUID();
+        const placeholder = await storage.createAssessment({
           userId,
-          assessmentId: result.assessmentId,
-          verdict: result.verdict,
-          riskScore: result.riskScore,
-        }
-      });
-      
+          id: placeholderId,
+          policyId: policy.id,
+          orderContext,
+          quickCheckDurationMs: 0,
+          stroopTestResults: null,
+          selfReportStress: null,
+          behavioralMetrics: {},
+          voiceProsodyScore: null,
+          facialExpressionScore: null,
+          riskScore: null as any,
+          verdict: 'pending' as any,
+          reasonTags: [],
+        } as any);
+
+        // If storage didn't return an id, fall back to our generated id
+        const returnedId = placeholder && (placeholder as any).id ? (placeholder as any).id : placeholderId;
+
+        // Save a lightweight placeholder record in-memory so subsequent
+        // updates and GET requests in demo/test flows can find it.
+        placeholderAssessments.set(returnedId, {
+          id: returnedId,
+          userId,
+          policyId: policy.id,
+          orderContext,
+          quickCheckDurationMs: 0,
+          stroopTestResults: null,
+          selfReportStress: null,
+          behavioralMetrics: {},
+          voiceProsodyScore: null,
+          facialExpressionScore: null,
+          riskScore: null,
+          verdict: 'pending',
+          reasonTags: [],
+          createdAt: new Date().toISOString(),
+        });
+
+        return res.json({ assessmentId: returnedId, pending: true });
+      }
+
+      // For demo users we avoid running full scoring to prevent deterministic
+      // or demo numeric scores being persisted and displayed. Always return a
+      // pending placeholder so the client runs interactive tests locally.
+      if (userId === 'demo-user') {
+        const policy = await storage.getDefaultPolicy();
+        const placeholderId = randomUUID();
+        const placeholder = await storage.createAssessment({
+          userId,
+          id: placeholderId,
+          policyId: policy.id,
+          orderContext,
+          quickCheckDurationMs: 0,
+          stroopTestResults: null,
+          selfReportStress: null,
+          behavioralMetrics: {},
+          voiceProsodyScore: null,
+          facialExpressionScore: null,
+          riskScore: null as any,
+          verdict: 'pending' as any,
+          reasonTags: [],
+        } as any);
+
+        const returnedId = placeholder && (placeholder as any).id ? (placeholder as any).id : placeholderId;
+
+        placeholderAssessments.set(returnedId, {
+          id: returnedId,
+          userId,
+          policyId: policy.id,
+          orderContext,
+          quickCheckDurationMs: 0,
+          stroopTestResults: null,
+          selfReportStress: null,
+          behavioralMetrics: {},
+          voiceProsodyScore: null,
+          facialExpressionScore: null,
+          riskScore: null,
+          verdict: 'pending',
+          reasonTags: [],
+          createdAt: new Date().toISOString(),
+        });
+
+        return res.json({ assessmentId: returnedId, pending: true });
+      }
+
+      const result = await emotionGuard.checkBeforeTrade(userId, orderContext, signals, fastMode);
+
+      // Broadcast real-time event. Only include riskScore if present and numeric.
+      const eventData: any = {
+        userId,
+        assessmentId: result.assessmentId,
+        verdict: result.verdict,
+      };
+      if (typeof (result as any).riskScore === 'number') eventData.riskScore = (result as any).riskScore;
+
+      broadcastEvent({ type: 'assessment_completed', data: eventData });
+
       res.json(result);
     } catch (error) {
       console.error('Trade check failed:', error);
@@ -268,10 +443,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post('/api/emotion-guard/trade-outcome', async (req, res) => {
     try {
-      const { assessmentId, outcome } = outcomeSchema.parse(req.body);
-      
+      // Validate payload and return 422 for client errors
+      const parsed = outcomeSchema.safeParse(req.body);
+      if (!parsed.success) {
+        console.warn('Invalid trade-outcome payload:', parsed.error.format());
+        return res.status(422).json({ message: 'Invalid payload', details: parsed.error.errors });
+      }
+
+      const { assessmentId, outcome } = parsed.data;
+
+      if (!assessmentId || assessmentId === 'undefined') {
+        console.warn('Attempt to record trade outcome with missing assessmentId');
+        return res.status(422).json({ message: 'Missing assessmentId' });
+      }
+
       await emotionGuard.recordTradeOutcome(assessmentId, outcome);
-      
+
       res.json({ success: true });
     } catch (error) {
       console.error('Trade outcome recording failed:', error);
@@ -443,12 +630,54 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.put('/api/emotion-guard/assessments/:id/facial-metrics', async (req, res) => {
     try {
       const assessmentId = req.params.id;
-      const { facialMetrics, stressLevel, cognitiveResults } = req.body;
-      
+      let { facialMetrics } = req.body;
+      const { stressLevel, cognitiveResults } = req.body;
+
+      // Defensive validation: assessmentId must be present
+      if (!assessmentId || assessmentId === 'undefined') {
+        console.warn('Attempt to update facial metrics with missing assessmentId');
+        return res.status(422).json({ message: 'Missing assessmentId in request path' });
+      }
+
+      // Basic payload validation to avoid internal service errors
+      if (!facialMetrics && stressLevel === undefined && !Array.isArray(cognitiveResults)) {
+        return res.status(422).json({ message: 'At least one of facialMetrics, stressLevel or cognitiveResults must be provided' });
+      }
+
+      // Validate facialMetrics shape if provided using zod for clear errors
+      if (facialMetrics) {
+        const parsed = facialMetricsSchema.safeParse(facialMetrics);
+        if (!parsed.success) {
+          return res.status(422).json({ message: 'Invalid facialMetrics', details: parsed.error.errors });
+        }
+
+        // Create a mutable copy of facialMetrics for sanitization
+        let sanitizedMetrics = {
+          isPresent: !!facialMetrics.isPresent,
+          blinkRate: Math.max(0, Math.min(60, facialMetrics.blinkRate ?? 0)),
+          eyeAspectRatio: Math.max(0, Math.min(1, facialMetrics.eyeAspectRatio ?? 0)),
+          jawOpenness: Math.max(0, Math.min(1, facialMetrics.jawOpenness ?? 0)),
+          browFurrow: Math.max(0, Math.min(1, facialMetrics.browFurrow ?? 0)),
+          gazeStability: Math.max(0, Math.min(1, facialMetrics.gazeStability ?? 0)),
+        };
+
+        // Update the facialMetrics reference to point to our sanitized copy
+        facialMetrics = sanitizedMetrics;
+      }
+
       console.log('🔍 updateAssessmentFacialMetrics received:', { assessmentId, facialMetrics: !!facialMetrics, stressLevel, cognitiveResults: cognitiveResults?.length || 0 });
-      
+
       await emotionGuard.updateAssessmentFacialMetrics(assessmentId, facialMetrics, stressLevel, cognitiveResults);
-      
+
+      // If an in-memory placeholder exists for this assessment, mirror the update
+      if (placeholderAssessments.has(assessmentId)) {
+        const existing = placeholderAssessments.get(assessmentId);
+        const updated = { ...existing };
+        if (facialMetrics) updated.facialMetrics = facialMetrics;
+        if (stressLevel !== undefined) updated.selfReportStress = stressLevel;
+        placeholderAssessments.set(assessmentId, updated);
+      }
+
       res.json({ success: true });
     } catch (error) {
       console.error('Facial metrics update failed:', error);
@@ -462,12 +691,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get('/api/emotion-guard/assessments/:id', async (req, res) => {
     try {
       const assessmentId = req.params.id;
-      const assessment = await storage.getAssessment(assessmentId);
-      
+      let assessment = await storage.getAssessment(assessmentId);
+
+      // Fallback to in-memory placeholder if persistent storage did not return the record
+      if (!assessment && placeholderAssessments.has(assessmentId)) {
+        assessment = placeholderAssessments.get(assessmentId);
+      }
+
       if (!assessment) {
         return res.status(404).json({ message: 'Assessment not found' });
       }
-      
+
       res.json(assessment);
     } catch (error) {
       console.error('Assessment retrieval failed:', error);
@@ -518,6 +752,84 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ 
         message: 'Demo trader creation failed' 
       });
+    }
+  });
+
+  // Deterministic mock facial metrics to support tests and demo flows
+  app.get('/api/demo/facial-metrics-mock', async (req, res) => {
+    try {
+      const scenario = (req.query.scenario as string) || 'calm';
+      let metrics: any;
+
+      if (scenario === 'stressed') {
+        metrics = {
+          isPresent: true,
+          blinkRate: 30,
+          eyeAspectRatio: 0.12,
+          jawOpenness: 0.6,
+          browFurrow: 0.8,
+          gazeStability: 0.2,
+        };
+      } else {
+        metrics = {
+          isPresent: true,
+          blinkRate: 12,
+          eyeAspectRatio: 0.28,
+          jawOpenness: 0.12,
+          browFurrow: 0.12,
+          gazeStability: 0.9,
+        };
+      }
+
+      res.json({ metrics });
+    } catch (error) {
+      console.error('Mock facial metrics failed:', error);
+      res.status(500).json({ message: 'Mock generator failed' });
+    }
+  });
+
+  // Demo face detector endpoint - validates incoming facial metrics and
+  // returns a deterministic detection result useful for testing.
+  app.post('/api/demo/face-detector', async (req, res) => {
+    try {
+      const { facialMetrics } = req.body;
+
+      if (!facialMetrics) {
+        return res.status(422).json({ message: 'Missing "facialMetrics" in request body' });
+      }
+
+      // Validate shape and ranges using zod schema for clear error messages
+      const parsed = facialMetricsSchema.safeParse(facialMetrics);
+      if (!parsed.success) {
+        return res.status(422).json({ message: 'Invalid facialMetrics', details: parsed.error.errors });
+      }
+
+      // Sanitize/clamp values before computing a detection confidence
+      const m = parsed.data;
+      const sanitized = {
+        isPresent: !!m.isPresent,
+        blinkRate: Math.max(0, Math.min(60, m.blinkRate ?? 0)),
+        eyeAspectRatio: Math.max(0, Math.min(1, m.eyeAspectRatio ?? 0)),
+        jawOpenness: Math.max(0, Math.min(1, m.jawOpenness ?? 0)),
+        browFurrow: Math.max(0, Math.min(1, m.browFurrow ?? 0)),
+        gazeStability: Math.max(0, Math.min(1, m.gazeStability ?? 0)),
+      };
+
+      // Deterministic confidence calculation (simple heuristic for tests)
+      // - More stable gaze -> higher confidence
+      // - Blink rate near typical ~15 -> higher confidence
+      // - Extreme metrics reduce confidence
+      let confidence = 0.6;
+      confidence += (sanitized.gazeStability - 0.5) * 0.6; // [-0.3, +0.3]
+      confidence -= Math.abs(sanitized.blinkRate - 15) / 60 * 0.3; // penalize far-from-typical
+      confidence += (1 - sanitized.eyeAspectRatio) * 0.1; // slight boost when eyes are open
+      if (!sanitized.isPresent) confidence = 0;
+      confidence = Math.max(0, Math.min(1, confidence));
+
+      return res.json({ detected: sanitized.isPresent, confidence: Number(confidence.toFixed(3)), sanitized });
+    } catch (error) {
+      console.error('Face detector demo failed:', error);
+      res.status(500).json({ message: 'Face detector failed' });
     }
   });
 
@@ -661,11 +973,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const baseProfit = avgStress <= 5 ? 2000 + Math.random() * 3000 : Math.random() * 2000 - 500;
         
         return {
-          id: `session-${index + 1}`,
-          date,
-          duration: 360 + Math.floor(Math.random() * 180), // 6-9 hours
-          trades: dayAssessments.length + Math.floor(Math.random() * 10),
-          pnl: Math.round(baseProfit),
           avgStress: Math.round(avgStress * 10) / 10,
           maxStress: Math.round(maxStress),
           assessments: dayAssessments.length,
