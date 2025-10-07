@@ -3,6 +3,7 @@ import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { AlertCircle, Zap, Target, Brain } from 'lucide-react';
+import { GoNoGoTest, type GoNoGoResult } from './GoNoGoTest';
 import type { CognitiveTestResult, TestTrial } from '@/types/emotionGuard';
 
 interface A        // Move to next test or complete assessment
@@ -127,6 +128,9 @@ const generateStimulus = (testType: string, difficulty: 'easy' | 'medium' | 'har
 };
 
 export function AdvancedCognitiveAssessment({ onComplete, config = {} }: AdvancedCognitiveAssessmentProps) {
+  // FIX #2: Replace reaction time with Go/No-Go test (more stress-sensitive)
+  const useGoNoGo = config.includeReactionTime ?? true;
+  
   const {
     includeStroop = true,
     includeReactionTime = true,
@@ -646,7 +650,75 @@ export function AdvancedCognitiveAssessment({ onComplete, config = {} }: Advance
           </div>
         );
         
-      case 'reaction':
+            case 'reaction':
+        // FIX #2: Use Go/No-Go test instead of simple reaction time
+        // Go/No-Go is much more stress-sensitive (inhibitory control)
+        if (useGoNoGo) {
+          return (
+            <GoNoGoTest 
+              onComplete={(result: GoNoGoResult) => {
+                // Convert Go/No-Go result to CognitiveTestResult format
+                const trials: TestTrial[] = result.trials.map((trial): TestTrial => ({
+                  testType: 'reaction',
+                  trialNumber: trial.trialNumber,
+                  stimulus: trial.stimulus,
+                  correctResponse: trial.stimulusType === 'go' ? 'press' : 'withhold',
+                  userResponse: trial.userResponse,
+                  reactionTimeMs: trial.reactionTimeMs,
+                  correct: trial.correct,
+                  difficulty: 'medium' as const,
+                  timestamp: trial.timestamp,
+                  hesitationCount: 0,
+                  responsePattern: trial.correct ? 'C' : 'E',
+                  stimulusType: trial.stimulusType
+                }));
+
+                const testResult: CognitiveTestResult = {
+                  testType: 'reaction',
+                  trials,
+                  overallScore: result.summary.overallScore,
+                  reactionTimeStats: {
+                    mean: result.summary.meanReactionTime,
+                    median: result.summary.meanReactionTime,
+                    standardDeviation: result.summary.reactionTimeStdDev,
+                    consistency: 1 - (result.summary.reactionTimeStdDev / Math.max(1, result.summary.meanReactionTime))
+                  },
+                  accuracyStats: {
+                    overall: (result.summary.goAccuracy + result.summary.nogoAccuracy) / 2,
+                    byDifficulty: {
+                      easy: result.summary.goAccuracy,
+                      medium: (result.summary.goAccuracy + result.summary.nogoAccuracy) / 2,
+                      hard: result.summary.nogoAccuracy
+                    }
+                  },
+                  attentionMetrics: {
+                    focusLapses: result.summary.falseAlarms,
+                    vigilanceDecline: 0,
+                    taskSwitchingCost: 0
+                  },
+                  stressIndicators: {
+                    performanceDecline: result.summary.falseAlarms / Math.max(1, result.summary.nogoTrials),
+                    errorRate: (result.summary.falseAlarms + result.summary.misses) / result.summary.totalTrials,
+                    responseVariability: result.summary.reactionTimeStdDev / Math.max(1, result.summary.meanReactionTime)
+                  }
+                };
+
+                setResults(prev => [...prev, testResult]);
+                setCompletedTests(prev => {
+                  const newSet = new Set(Array.from(prev));
+                  newSet.add('reaction');
+                  return newSet;
+                });
+
+                completeCurrentTest();
+              }}
+              totalTrials={fastMode ? 20 : 30}
+              nogoFrequency={0.25}
+            />
+          );
+        }
+        
+        // Fallback to simple reaction time (legacy)
         return (
           <div className="text-center space-y-6" data-testid="reaction-interface">
             <div className="mb-6">
@@ -734,10 +806,10 @@ export function AdvancedCognitiveAssessment({ onComplete, config = {} }: Advance
     }
   };
 
-  const formatTestName = (testType: string) => {
+    const formatTestName = (testType: string) => {
     switch (testType) {
       case 'stroop': return 'Color Recognition';
-      case 'reaction': return 'Reaction Time';
+      case 'reaction': return useGoNoGo ? 'Response Control (Go/No-Go)' : 'Reaction Time';
       case 'memory': return 'Working Memory';
       case 'attention': return 'Attention Switch';
       default: return testType;

@@ -1,4 +1,4 @@
-import { and, avg, count, desc, eq, gte, sql } from 'drizzle-orm';
+import { and, avg, asc, count, desc, eq, gte, sql } from 'drizzle-orm';
 import {
   users,
   policies,
@@ -31,7 +31,6 @@ import {
   type InsertAlertHistory,
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, desc, and, gte, sql } from "drizzle-orm";
 
 export interface IStorage {
   // User operations
@@ -230,9 +229,10 @@ export class DatabaseStorage implements IStorage {
     }
 
     const stats = await db.select({
-      totalAssessments: count(),
-      blockCount: count(and(eq(assessments.verdict, 'block'))),
-      overrideCount: count(and(eq(assessments.overrideUsed, true))),
+      totalAssessments: count(assessments.id),
+      blockCount: count(sql<number>`CASE WHEN ${assessments.verdict} = 'block' THEN 1 END`),
+      triggerCount: count(sql<number>`CASE WHEN ${assessments.riskScore} >= 65 THEN 1 END`),
+      overrideCount: count(sql<number>`CASE WHEN ${assessments.overrideUsed} = true THEN 1 END`),
       averageRiskScore: avg(assessments.riskScore)
     }).from(assessments)
       .where(gte(assessments.createdAt, since));
@@ -240,15 +240,23 @@ export class DatabaseStorage implements IStorage {
     const result = stats[0] || {
       totalAssessments: 0,
       blockCount: 0,
+      triggerCount: 0,
       overrideCount: 0,
       averageRiskScore: 0
     };
 
+    // Safely cast all values to numbers to avoid type issues
+    const total = Number(result.totalAssessments) || 0;
+    const blocked = Number(result.blockCount) || 0;
+    const triggered = Number(result.triggerCount) || 0;
+    const overridden = Number(result.overrideCount) || 0;
+    const avgRisk = Number(result.averageRiskScore) || 0;
+
     return {
-      totalAssessments: result.totalAssessments,
-      triggerRate: result.totalAssessments > 0 ? (result.totalAssessments / 100) : 0, // Mock calculation
-      blockRate: result.totalAssessments > 0 ? (result.blockCount / result.totalAssessments) * 100 : 0,
-      overrideRate: result.totalAssessments > 0 ? (result.overrideCount / result.totalAssessments) * 100 : 0,
+      totalAssessments: total,
+      triggerRate: total > 0 ? (triggered / total) * 100 : 0,
+      blockRate: total > 0 ? (blocked / total) * 100 : 0,
+      overrideRate: total > 0 ? (overridden / total) * 100 : 0,
       averageRiskScore: result.averageRiskScore || 0,
     };
   }
@@ -309,20 +317,36 @@ export class DatabaseStorage implements IStorage {
     action?: string;
     limit?: number;
   }): Promise<AuditLog[]> {
-    let query = db.select().from(auditLogs);
-    
-    const conditions = [];
-    if (filters.userId) conditions.push(eq(auditLogs.userId, filters.userId));
-    if (filters.assessmentId) conditions.push(eq(auditLogs.assessmentId, filters.assessmentId));
-    if (filters.action) conditions.push(eq(auditLogs.action, filters.action));
-    
-    if (conditions.length > 0) {
-      query = query.where(and(...conditions));
+    try {
+      let query = db.select().from(auditLogs);
+      
+      const conditions = [];
+      if (filters.userId) {
+        if (typeof filters.userId !== 'string') throw new Error('Invalid userId filter');
+        conditions.push(eq(auditLogs.userId, filters.userId));
+      }
+      if (filters.assessmentId) {
+        if (typeof filters.assessmentId !== 'string') throw new Error('Invalid assessmentId filter');
+        conditions.push(eq(auditLogs.assessmentId, filters.assessmentId));
+      }
+      if (filters.action) {
+        if (typeof filters.action !== 'string') throw new Error('Invalid action filter');
+        conditions.push(eq(auditLogs.action, filters.action));
+      }
+      
+      if (conditions.length > 0) {
+        query = query.where(and(...conditions));
+      }
+      
+      const limit = Math.min(Math.max(1, filters.limit || 100), 1000); // Ensure limit is between 1-1000
+      
+      return await query
+        .orderBy(desc(auditLogs.timestamp))
+        .limit(limit);
+    } catch (error) {
+      console.error('Error in getAuditLogs:', error);
+      throw new Error('Failed to retrieve audit logs: ' + (error instanceof Error ? error.message : String(error)));
     }
-    
-    return query
-      .orderBy(desc(auditLogs.timestamp))
-      .limit(filters.limit || 100);
   }
 
   async createEvent(event: InsertRealTimeEvent): Promise<RealTimeEvent> {
@@ -341,15 +365,16 @@ export class DatabaseStorage implements IStorage {
   async markEventProcessed(id: string): Promise<void> {
     await db
       .update(realTimeEvents)
-      .set({ processed: true })
+      .set({ processed: true, updatedAt: new Date() })
       .where(eq(realTimeEvents.id, id));
   }
 
   async getRecentEvents(limit = 50): Promise<RealTimeEvent[]> {
-    return db.query.realTimeEvents.findMany({
-      orderBy: desc(realTimeEvents.createdAt),
-      limit
-    });
+    return db
+      .select()
+      .from(realTimeEvents)
+      .orderBy(desc(realTimeEvents.createdAt))
+      .limit(limit);
   }
 
   async getTradingDesks(): Promise<TradingDesk[]> {
