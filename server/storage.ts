@@ -257,7 +257,7 @@ export class DatabaseStorage implements IStorage {
       triggerRate: total > 0 ? (triggered / total) * 100 : 0,
       blockRate: total > 0 ? (blocked / total) * 100 : 0,
       overrideRate: total > 0 ? (overridden / total) * 100 : 0,
-      averageRiskScore: result.averageRiskScore || 0,
+      averageRiskScore: avgRisk
     };
   }
 

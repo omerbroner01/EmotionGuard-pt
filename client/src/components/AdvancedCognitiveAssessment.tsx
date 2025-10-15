@@ -1,34 +1,64 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { AlertCircle, Zap, Target, Brain } from 'lucide-react';
+import { AlertCircle, Zap, Brain } from 'lucide-react';
 import { GoNoGoTest, type GoNoGoResult } from './GoNoGoTest';
-import type { CognitiveTestResult, TestTrial } from '@/types/emotionGuard';
+import { EmotionRecognitionTest, type EmotionRecognitionResult } from './EmotionRecognitionTest';
 
-interface A        // Move to next test or complete assessment
-      const currentIndex = testQueue.indexOf(currentTest);
-      if (currentIndex < testQueue.length - 1) {
-        const nextTest = testQueue[currentIndex + 1];
-        
-        // Reset all state atomically
-        setIsInTrial(false);
-        trialDataRef.current = [];
-        responsePatternRef.current = '';
-        setCurrentDifficulty('easy');
-        setTestProgress(0);
-        setPerformanceHistory([]);
-        
-        // Small delay for better UX
-        await new Promise(resolve => setTimeout(resolve, 500));
-        
-        setCurrentTest(nextTest);
-        initializeTest(nextTest);tiveAssessmentProps {
+interface TestTrial {
+  testType: string;
+  trialNumber: number;
+  stimulus: string;
+  correctResponse: string;
+  userResponse: string;
+  reactionTimeMs: number;
+  correct: boolean;
+  difficulty: 'easy' | 'medium' | 'hard';
+  timestamp: number;
+  hesitationCount: number;
+  responsePattern: string;
+  stimulusType?: string;
+  displayColor?: string;
+  memoryType?: string;
+}
+
+interface CognitiveTestResult {
+  testType: string;
+  overallScore: number;
+  trials: TestTrial[];
+  reactionTimeStats: {
+    mean: number;
+    median: number;
+    standardDeviation: number;
+    consistency: number;
+  };
+  accuracyStats: {
+    overall: number;
+    byDifficulty: {
+      easy: number;
+      medium: number;
+      hard: number;
+    };
+  };
+  attentionMetrics: {
+    focusLapses: number;
+    vigilanceDecline: number;
+    taskSwitchingCost: number;
+  };
+  stressIndicators: {
+    performanceDecline: number;
+    errorRate: number;
+    responseVariability: number;
+  };
+}
+
+interface AdvancedCognitiveAssessmentProps {
   onComplete: (results: CognitiveTestResult[]) => void;
   config?: {
     includeStroop?: boolean;
     includeReactionTime?: boolean;
-    includeWorkingMemory?: boolean;
+    includeEmotionRecognition?: boolean; // New test type
     includeAttentionSwitch?: boolean;
     fastMode?: boolean;
     adaptiveDifficulty?: boolean;
@@ -50,14 +80,8 @@ const STROOP_CONFIG = {
 };
 
 const REACTION_STIMULI = {
-  visual: ['●', '■', '▲', '♦', '★'],
-  color: ['#ff0000', '#00ff00', '#0000ff', '#ffff00', '#ff00ff'],
-  auditory: ['BEEP', 'BUZZ', 'PING', 'CHIME']
-};
-
-const WORKING_MEMORY_CONFIG = {
-  digitSpans: { easy: [3, 4], medium: [4, 5], hard: [5, 6, 7] },
-  nBackLevels: { easy: 1, medium: 2, hard: 3 }
+  visual: ['→', '↑', '▶', '▲', '●'], // Go stimuli for GoNoGo
+  nogo: ['X', '✕', '⊗', '⛔', '🛑'] // No-Go stimuli for GoNoGo
 };
 
 const generateStimulus = (testType: string, difficulty: 'easy' | 'medium' | 'hard') => {
@@ -92,33 +116,21 @@ const generateStimulus = (testType: string, difficulty: 'easy' | 'medium' | 'har
     }
     
     case 'reaction': {
-      const stimulusTypes = difficulty === 'easy' ? ['visual'] : 
-                          difficulty === 'medium' ? ['visual', 'color'] : 
-                          ['visual', 'color', 'auditory'];
-      
-      const stimulusType = stimulusTypes[Math.floor(Math.random() * stimulusTypes.length)];
-      const stimulus = REACTION_STIMULI[stimulusType as keyof typeof REACTION_STIMULI][
-        Math.floor(Math.random() * REACTION_STIMULI[stimulusType as keyof typeof REACTION_STIMULI].length)
-      ];
-      
+      // This case is now handled by GoNoGoTest component directly,
+      // but keeping a placeholder for type consistency if needed elsewhere.
       return {
-        stimulus,
-        stimulusType,
-        correctResponse: 'space' // Space bar for all reaction trials
+        stimulus: 'Press Space',
+        stimulusType: 'go',
+        correctResponse: 'space'
       };
     }
     
-    case 'memory': {
-      const spanLengths = WORKING_MEMORY_CONFIG.digitSpans[difficulty];
-      const spanLength = spanLengths[Math.floor(Math.random() * spanLengths.length)];
-      const digits = Array.from({ length: spanLength }, () => 
-        Math.floor(Math.random() * 10).toString()
-      ).join('');
-      
+    case 'emotion_recognition': {
+      // Stimulus generation is handled within EmotionRecognitionTest
       return {
-        stimulus: digits,
-        correctResponse: digits.split('').reverse().join(''), // Reverse for backward span
-        memoryType: 'digit_span'
+        stimulus: 'Recognize Emotion',
+        correctResponse: '', // Response handled by EmotionRecognitionTest
+        stimulusType: 'emotion'
       };
     }
     
@@ -134,7 +146,7 @@ export function AdvancedCognitiveAssessment({ onComplete, config = {} }: Advance
   const {
     includeStroop = true,
     includeReactionTime = true,
-    includeWorkingMemory = true,
+    includeEmotionRecognition = true, // New test type
     includeAttentionSwitch = false,
     fastMode = false,
     adaptiveDifficulty = true
@@ -200,7 +212,7 @@ export function AdvancedCognitiveAssessment({ onComplete, config = {} }: Advance
         setAssessmentStatus('in-progress');
       }
     }
-  }, [currentTest, testQueue]);
+  }, [currentTest, testQueue, completedTests, results, assessmentStatus]);
 
   // Initialize test queue and handle cleanup
   useEffect(() => {
@@ -214,7 +226,7 @@ export function AdvancedCognitiveAssessment({ onComplete, config = {} }: Advance
         const queue: string[] = [];
         if (includeStroop) queue.push('stroop');
         if (includeReactionTime) queue.push('reaction');
-        if (includeWorkingMemory) queue.push('memory');
+        if (includeEmotionRecognition) queue.push('emotion_recognition'); // Add new test
         if (includeAttentionSwitch) queue.push('attention');
         
         if (queue.length === 0) {
@@ -254,7 +266,7 @@ export function AdvancedCognitiveAssessment({ onComplete, config = {} }: Advance
       }
       setCompletedTests(new Set()); // Reset completion state on unmount
     };
-  }, [includeStroop, includeReactionTime, includeWorkingMemory, includeAttentionSwitch]);
+  }, [includeStroop, includeReactionTime, includeEmotionRecognition, includeAttentionSwitch]);
 
   // Adaptive difficulty adjustment
   const adjustDifficulty = useCallback((recentPerformance: number) => {
@@ -380,7 +392,8 @@ export function AdvancedCognitiveAssessment({ onComplete, config = {} }: Advance
       // Check if test is complete
       const maxTrials = fastMode ? 10 : 
                       currentTrial.testType === 'stroop' ? 30 :
-                      currentTrial.testType === 'reaction' ? 25 :
+                      currentTrial.testType === 'reaction' ? 25 : // Go/No-Go trials
+                      currentTrial.testType === 'emotion_recognition' ? 20 : // Emotion recognition trials
                       20;
       
       const isTestComplete = trialDataRef.current.length >= maxTrials;
@@ -748,47 +761,64 @@ export function AdvancedCognitiveAssessment({ onComplete, config = {} }: Advance
         
       case 'memory':
         return (
-          <div className="text-center space-y-6" data-testid="memory-interface">
-            <div className="mb-6">
-              <h3 className="text-xl font-semibold mb-2 flex items-center justify-center gap-2">
-                <Target className="w-5 h-5" />
-                Working Memory Test
-              </h3>
-              <p className="text-sm text-muted-foreground">
-                Remember these digits and type them in REVERSE order
-              </p>
-            </div>
-            
-            <div className="text-4xl font-mono mb-8 tracking-widest" data-testid="memory-digits">
-              {currentTrial.stimulus}
-            </div>
-            
-            <div className="space-y-4">
-              <input
-                type="text"
-                placeholder="Type digits in reverse order"
-                className="w-64 h-12 text-center text-xl border rounded-lg"
-                onKeyPress={(e) => {
-                  if (e.key === 'Enter') {
-                    handleResponse((e.target as HTMLInputElement).value);
-                  }
-                }}
-                data-testid="memory-input"
-                autoFocus
-              />
-              <div>
-                <Button
-                  onClick={() => {
-                    const input = document.querySelector('[data-testid="memory-input"]') as HTMLInputElement;
-                    handleResponse(input.value);
-                  }}
-                  data-testid="memory-submit"
-                >
-                  Submit
-                </Button>
-              </div>
-            </div>
-          </div>
+          <EmotionRecognitionTest
+            onComplete={(result: EmotionRecognitionResult) => {
+              const trials: TestTrial[] = result.trials.map((trial): TestTrial => ({
+                testType: 'emotion_recognition',
+                trialNumber: trial.trialNumber,
+                stimulus: trial.targetEmotion,
+                correctResponse: trial.targetEmotion,
+                userResponse: trial.detectedEmotion || 'none',
+                reactionTimeMs: trial.reactionTimeMs,
+                correct: trial.correct,
+                difficulty: 'medium' as const, // Emotion recognition doesn't have explicit difficulty levels yet
+                timestamp: trial.timestamp,
+                hesitationCount: 0,
+                responsePattern: trial.correct ? 'C' : 'E',
+                stimulusType: 'emotion'
+              }));
+
+              const testResult: CognitiveTestResult = {
+                testType: 'emotion_recognition',
+                trials,
+                overallScore: result.summary.overallScore,
+                reactionTimeStats: {
+                  mean: result.summary.meanReactionTime,
+                  median: result.summary.meanReactionTime,
+                  standardDeviation: 0, // Not calculated in EmotionRecognitionTest summary
+                  consistency: 0, // Not calculated in EmotionRecognitionTest summary
+                },
+                accuracyStats: {
+                  overall: result.summary.accuracy,
+                  byDifficulty: {
+                    easy: result.summary.accuracy,
+                    medium: result.summary.accuracy,
+                    hard: result.summary.accuracy,
+                  },
+                },
+                attentionMetrics: {
+                  focusLapses: 0,
+                  vigilanceDecline: 0,
+                  taskSwitchingCost: 0,
+                },
+                stressIndicators: {
+                  performanceDecline: 0,
+                  errorRate: 1 - result.summary.accuracy,
+                  responseVariability: 0,
+                },
+              };
+
+              setResults(prev => [...prev, testResult]);
+              setCompletedTests(prev => {
+                const newSet = new Set(Array.from(prev));
+                newSet.add('emotion_recognition');
+                return newSet;
+              });
+
+              completeCurrentTest();
+            }}
+            totalTrials={fastMode ? 10 : 20}
+          />
         );
         
       default:
@@ -800,7 +830,7 @@ export function AdvancedCognitiveAssessment({ onComplete, config = {} }: Advance
     switch (testType) {
       case 'stroop': return AlertCircle;
       case 'reaction': return Zap;
-      case 'memory': return Target;
+      case 'emotion_recognition': return Brain; // Use Brain icon for emotion recognition
       case 'attention': return Brain;
       default: return Brain;
     }
@@ -810,7 +840,7 @@ export function AdvancedCognitiveAssessment({ onComplete, config = {} }: Advance
     switch (testType) {
       case 'stroop': return 'Color Recognition';
       case 'reaction': return useGoNoGo ? 'Response Control (Go/No-Go)' : 'Reaction Time';
-      case 'memory': return 'Working Memory';
+      case 'emotion_recognition': return 'Facial Emotion Recognition'; // New test name
       case 'attention': return 'Attention Switch';
       default: return testType;
     }

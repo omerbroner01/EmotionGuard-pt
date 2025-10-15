@@ -4,17 +4,45 @@
  */
 
 import { Camera } from '@mediapipe/camera_utils';
-import { FaceMesh, Results } from '@mediapipe/face_mesh';
+import { FaceMesh, Results, NormalizedLandmark } from '@mediapipe/face_mesh';
 
+interface Point2D {
+  x: number;
+  y: number;
+}
+
+interface EyeLandmarks {
+  upper: number[];
+  lower: number[];
+  outer: number[];
+  inner: number[];
+}
+
+interface FacialLandmarks {
+  [key: number]: NormalizedLandmark;
+}
+
+// FIX #3: Enhanced face metrics with expression cues and performance data
 export interface FaceMetrics {
   isPresent: boolean;
   blinkRate: number; // blinks per minute
   eyeAspectRatio: number; // lower values indicate closed eyes
   jawOpenness: number; // jaw tension indicator
-  browFurrow: number; // stress indicator
-  gazeStability: number; // attention/distraction measure
+  browFurrow: number; // stress indicator (0-1, higher = more stress)
+  gazeStability: number; // attention/distraction measure (0-1, higher = more stable)
+  
+  // FIX #3: New expression cues
+  expressionCues: {
+    concentration: number; // 0-1, based on brow/gaze
+    stress: number; // 0-1, composite stress indicator
+    fatigue: number; // 0-1, based on blink rate and EAR
+  };
+  
+  // FIX #3: Performance metrics
   fps?: number;
   latencyMs?: number;
+  medianLatencyMs?: number;
+  confidence?: number; // Detection confidence 0-1
 }
 
 export interface BlinkEvent {
@@ -33,9 +61,9 @@ const LEFT_EYE_LANDMARKS = {
 // Note: In MediaPipe FaceMesh, right eye outer corner is 263, inner is 362
 const RIGHT_EYE_LANDMARKS = {
   upper: [386, 385, 384, 398], // Upper eyelid
-  lower: [362, 382, 381, 380], // Lower eyelid
-  outer: [263], // Outer corner (corrected)
-  inner: [362] // Inner corner (corrected)
+  lower: [373, 374, 380, 381], // Lower eyelid (corrected indices)
+  outer: [263], // Outer corner
+  inner: [362] // Inner corner
 };
 
 export class FaceDetectionService {
@@ -44,36 +72,73 @@ export class FaceDetectionService {
   private faceMesh: FaceMesh | null = null;
   private isRunning = false;
   private blinkEvents: BlinkEvent[] = [];
-  private lastEyeAspectRatio: number | null = null;
+  private lastEyeCenter: Point2D | null = null; // Stores the last detected eye center for gaze stability
   private smoothedEyeAspectRatio: number | null = null;
   private smoothedJawOpenness: number | null = null;
   private smoothedBrowFurrow: number | null = null;
   private smoothedGazeStability: number | null = null;
   private earWindow: number[] = [];
-  private readonly earWindowSize = 5; // temporal median filter window
+  private readonly earWindowSize = 10; // Increased window size for smoother detection
+  private readonly stabilityThreshold = 0.15; // Threshold for gaze stability
+  private readonly blinkThreshold = 0.25; // Threshold for blink detection
+  private readonly expressionUpdateInterval = 100; // ms between expression updates
   private callbacks: ((metrics: FaceMetrics) => void)[] = [];
   private lastFaceDetected = false;
   private blinkStartTime = 0;
   private isBlinking = false;
+  private lastExpressionUpdate = 0;
   private fallbackMode = false;
   private fallbackInterval?: NodeJS.Timeout;
+
+
+
+    // FIX #3: Enhanced performance tracking
   private fpsCounter = { frames: 0, lastTs: 0, fps: 0 };
   private lastFrameStartTs = 0;
   private lastLatencyMs = 0;
+  private latencyHistory: number[] = [];
+  private readonly latencyHistorySize = 30; // Track last 30 frames for median
 
-  // Settings
+  private calculateMedianLatency(): number {
+    if (this.latencyHistory.length === 0) return this.lastLatencyMs;
+    
+    // Sort copy of buffer and find median
+    const sorted = [...this.latencyHistory].sort((a, b) => a - b);
+    const mid = Math.floor(sorted.length / 2);
+    
+    if (sorted.length % 2 === 0) {
+      return (sorted[mid - 1] + sorted[mid]) / 2;
+    }
+    return sorted[mid];
+  }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    // FIX #3: Improved face detection settings with tunable thresholds
   private settings: FaceDetectionSettings = {
-    minDetectionConfidence: 0.6,
-    minTrackingConfidence: 0.6,
-    refineLandmarks: true,
-    blinkCloseThreshold: 0.18,
-    blinkOpenThreshold: 0.22,
-    emaAlphaEar: 0.35,
-    emaAlphaOther: 0.25,
-    emaAlphaGaze: 0.2,
-    targetWidth: 640,
+    minDetectionConfidence: 0.7,  // Raised for better reliability
+    minTrackingConfidence: 0.7,   // Raised for better reliability
+    refineLandmarks: true,         // Essential for accurate EAR/expression
+    blinkCloseThreshold: 0.20,     // Tuned for better blink detection
+    blinkOpenThreshold: 0.24,      // Hysteresis to prevent false positives
+    emaAlphaEar: 0.30,             // Balanced smoothing (One-Euro-like)
+    emaAlphaOther: 0.25,           // Stable for expression metrics
+    emaAlphaGaze: 0.20,            // More smoothing for gaze stability
+    targetWidth: 640,              // Higher resolution for better landmarks
     targetHeight: 480,
-    targetFps: 24,
+    targetFps: 30,                 // Target 30 FPS for real-time performance
     debug: false,
   };
 
@@ -94,19 +159,21 @@ export class FaceDetectionService {
     
     // Performance optimization: Use race condition with fast fallback for B2B demos
     const initTimeout = new Promise((_, reject) => {
-      setTimeout(() => reject(new Error('Face detection init timeout')), 2000); // 2s max for camera
+      setTimeout(() => reject(new Error('Face detection init timeout')), 5000); // Increased timeout for better reliability
     });
     
     try {
-      // Step 1: Fast camera access with optimization
+      // Step 1: Fast camera access with optimization and enhanced capabilities
       this.debugLog('Requesting camera access');
       
       const cameraPromise = navigator.mediaDevices.getUserMedia({ 
         video: { 
-          width: 320, // Reduced resolution for faster processing
-          height: 240,
+          width: { ideal: 640, min: 320 }, // Adaptive resolution
+          height: { ideal: 480, min: 240 },
           facingMode: 'user',
-          frameRate: { ideal: 15, max: 30 } // Lower framerate for better performance
+          frameRate: { ideal: 30, min: 15 }, // Adaptive framerate
+          aspectRatio: { ideal: 1.333333 }, // 4:3 aspect ratio for better face detection
+          resizeMode: 'crop-and-scale' // Ensure consistent input size
         },
         audio: false
       });
@@ -323,6 +390,14 @@ export class FaceDetectionService {
       // producing demo numeric risk scores. Occasionally simulate a presence
       // (10% chance) for UI demos without making it the default behavior.
       const simulatePresence = Math.random() < 0.10;
+      // Calculate simulated expression cues
+      const concentration = simulatePresence ? 
+        Math.min(1, baseGazeStability * 0.7 + (1 - baseBrowFurrow) * 0.3) : 1.0;
+      const stress = simulatePresence ? 
+        Math.min(1, baseBrowFurrow * 0.4 + baseJawOpenness * 0.3 + (1 - baseGazeStability) * 0.3) : 0.0;
+      const fatigue = simulatePresence ? 
+        Math.min(1, (1 - baseEyeAspectRatio) * 0.5 + (baseBlinkRate > 25 ? 0.5 : 0)) : 0.0;
+
       const metrics: FaceMetrics = {
         isPresent: simulatePresence,
         blinkRate: simulatePresence ? Math.round(baseBlinkRate) : 0,
@@ -330,8 +405,15 @@ export class FaceDetectionService {
         jawOpenness: simulatePresence ? baseJawOpenness : 0,
         browFurrow: simulatePresence ? baseBrowFurrow : 0,
         gazeStability: simulatePresence ? baseGazeStability : 1.0,
+        expressionCues: {
+          concentration,
+          stress,
+          fatigue
+        },
         fps: this.fpsCounter.fps,
         latencyMs: this.lastLatencyMs,
+        medianLatencyMs: this.calculateMedianLatency(),
+        confidence: simulatePresence ? 0.85 : 0.0
       };
 
       // Notify all callbacks
@@ -374,10 +456,10 @@ export class FaceDetectionService {
     this.debugLog('Detection stopped');
   }
 
-  private onFaceMeshResults(results: Results): void {
+    private onFaceMeshResults(results: Results): void {
     const currentTime = Date.now();
-    const faceDetected = results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0;
-    
+    const faceDetected = results.multiFaceLandmarks?.length > 0;
+
     let metrics: FaceMetrics;
 
     if (faceDetected && results.multiFaceLandmarks[0]) {
@@ -411,6 +493,15 @@ export class FaceDetectionService {
       this.smoothedBrowFurrow = this.applyEma(this.smoothedBrowFurrow, browFurrowRaw, this.settings.emaAlphaOther);
       this.smoothedGazeStability = this.applyEma(this.smoothedGazeStability, gazeStabilityRaw, this.settings.emaAlphaGaze);
       
+      // Calculate expression cues
+      const concentration = Math.min(1, (this.smoothedGazeStability ?? gazeStabilityRaw) * 0.7 + 
+                                     (1 - (this.smoothedBrowFurrow ?? browFurrowRaw)) * 0.3);
+      const stress = Math.min(1, (this.smoothedBrowFurrow ?? browFurrowRaw) * 0.4 +
+                                (this.smoothedJawOpenness ?? jawOpennessRaw) * 0.3 +
+                                (1 - (this.smoothedGazeStability ?? gazeStabilityRaw)) * 0.3);
+      const fatigue = Math.min(1, (1 - (this.smoothedEyeAspectRatio ?? avgEAR)) * 0.5 +
+                                 (this.calculateBlinkRate() > 25 ? 0.5 : 0));
+
       metrics = {
         isPresent: true,
         blinkRate: this.calculateBlinkRate(),
@@ -418,8 +509,15 @@ export class FaceDetectionService {
         jawOpenness: this.smoothedJawOpenness ?? jawOpennessRaw,
         browFurrow: this.smoothedBrowFurrow ?? browFurrowRaw,
         gazeStability: this.smoothedGazeStability ?? gazeStabilityRaw,
+        expressionCues: {
+          concentration,
+          stress,
+          fatigue
+        },
         fps: this.fpsCounter.fps,
         latencyMs: this.lastLatencyMs,
+        medianLatencyMs: this.calculateMedianLatency(),
+        confidence: 0.85 // Fixed value for now
       };
     } else {
       // No face detected
@@ -430,7 +528,14 @@ export class FaceDetectionService {
     
     // Update latency from last frame start
     if (this.lastFrameStartTs) {
-      this.lastLatencyMs = Math.max(0, Math.round(performance.now() - this.lastFrameStartTs));
+      const latency = Math.max(0, Math.round(performance.now() - this.lastFrameStartTs));
+      this.lastLatencyMs = latency;
+      
+      // Update latency history
+      this.latencyHistory.push(latency);
+      if (this.latencyHistory.length > this.latencyHistorySize) {
+        this.latencyHistory.shift();
+      }
     }
 
     // Notify all callbacks
@@ -541,10 +646,23 @@ export class FaceDetectionService {
     // Track small variations frame-to-frame by comparing with last centers
     if (!(leftEyeCenter && rightEyeCenter)) return 0.0;
     const eyeCenter = { x: (leftEyeCenter.x + rightEyeCenter.x) / 2, y: (leftEyeCenter.y + rightEyeCenter.y) / 2 };
-    const last = this.lastEyeAspectRatio; // reuse presence of previous frame as a signal that stream is ongoing
-    // Use EAR change as a proxy for micro-movements; smaller change = higher stability
-    const earChange = this.lastEyeAspectRatio == null ? 0 : Math.abs(this.lastEyeAspectRatio - eyeCenter.x * 0.0 + eyeCenter.y * 0.0);
-    const stability = Math.max(0, Math.min(1, 1 - earChange * 8));
+    
+    // Track small variations frame-to-frame by comparing with last centers
+    if (this.lastEyeCenter === null) {
+      this.lastEyeCenter = eyeCenter;
+      return 1.0; // Assume stable initially
+    }
+
+    // Calculate movement magnitude
+    const dx = eyeCenter.x - this.lastEyeCenter.x;
+    const dy = eyeCenter.y - this.lastEyeCenter.y;
+    const movement = this.euclideanDistance(eyeCenter, this.lastEyeCenter);
+
+    // Normalize movement to a stability score (smaller movement = higher stability)
+    // Max movement of 0.05 (normalized coordinates) would result in 0 stability
+    const stability = Math.max(0, 1 - (movement / 0.05)); 
+    
+    this.lastEyeCenter = eyeCenter; // Update for next frame
     return stability;
   }
 
@@ -581,7 +699,16 @@ export class FaceDetectionService {
       eyeAspectRatio: 0.22,
       jawOpenness: 0,
       browFurrow: 0,
-      gazeStability: 1.0
+      gazeStability: 1.0,
+      expressionCues: {
+        concentration: 1.0,
+        stress: 0.0,
+        fatigue: 0.0
+      },
+      fps: this.fpsCounter.fps,
+      latencyMs: 0,
+      medianLatencyMs: 0,
+      confidence: 0.0
     };
   }
 

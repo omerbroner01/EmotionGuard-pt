@@ -221,7 +221,7 @@ export class AdaptiveBaselineLearningService {
       const winningTrades = pnlValues.filter((pnl: number) => pnl > 0).length;
       const winRate = (winningTrades / pnlValues.length) * 100;
       
-      const avgRiskScore = assessmentGroup.reduce((sum: number, a: Assessment) => sum + a.riskScore, 0) / assessmentGroup.length;
+      const avgRiskScore = assessmentGroup.reduce((sum: number, a: Assessment) => sum + (a.riskScore ?? 0), 0) / assessmentGroup.length;
       
       // Calculate average execution time (assessment creation to trade execution)
       const executionTimes = assessmentGroup
@@ -505,7 +505,7 @@ export class AdaptiveBaselineLearningService {
       },
       confidence: 0.3,
       learningProgress: 0.1,
-      performanceImprovement: 0,
+            performanceImprovement: 0,
     };
   }
 }

@@ -109,12 +109,12 @@ export class IntelligentRiskPatternService {
         id: `${assessment.id}_mouse`,
         userId: assessment.userId,
         patternType: 'mouse_stability',
-        signalSignature: {
+                signalSignature: {
           stability: mouseStability,
           movementCount: metrics.mouseMovements.length,
           riskContext: this.normalizeContextRisk(assessment.orderContext as any),
         },
-        riskOutcome: assessment.riskScore,
+        riskOutcome: assessment.riskScore ?? 0,
         contextSimilarity: this.calculateContextSimilarity(assessment.orderContext as any),
         frequency: 1,
         lastSeen: assessment.createdAt || new Date(),
@@ -129,12 +129,12 @@ export class IntelligentRiskPatternService {
         id: `${assessment.id}_keystroke`,
         userId: assessment.userId,
         patternType: 'keystroke_rhythm',
-        signalSignature: {
+                signalSignature: {
           rhythm: keystrokeRhythm,
           typingSpeed: this.calculateTypingSpeed(metrics.keystrokeTimings),
           riskContext: this.normalizeContextRisk(assessment.orderContext as any),
         },
-        riskOutcome: assessment.riskScore,
+        riskOutcome: assessment.riskScore ?? 0,
         contextSimilarity: this.calculateContextSimilarity(assessment.orderContext as any),
         frequency: 1,
         lastSeen: assessment.createdAt || new Date(),
@@ -151,8 +151,8 @@ export class IntelligentRiskPatternService {
           id: `${assessment.id}_cognitive`,
           userId: assessment.userId,
           patternType: 'cognitive_performance',
-          signalSignature: cognitiveSignature,
-          riskOutcome: assessment.riskScore,
+                    signalSignature: cognitiveSignature,
+          riskOutcome: assessment.riskScore ?? 0,
           contextSimilarity: this.calculateContextSimilarity(assessment.orderContext as any),
           frequency: 1,
           lastSeen: assessment.createdAt || new Date(),
@@ -167,12 +167,12 @@ export class IntelligentRiskPatternService {
         id: `${assessment.id}_stress`,
         userId: assessment.userId,
         patternType: 'stress_escalation',
-        signalSignature: {
+                signalSignature: {
           stressLevel: assessment.selfReportStress / 10, // Normalize to 0-1
           riskContext: this.normalizeContextRisk(assessment.orderContext as any),
           timeOfDay: this.normalizeTimeOfDay(assessment.createdAt || new Date()),
         },
-        riskOutcome: assessment.riskScore,
+        riskOutcome: assessment.riskScore ?? 0,
         contextSimilarity: this.calculateContextSimilarity(assessment.orderContext as any),
         frequency: 1,
         lastSeen: assessment.createdAt || new Date(),
@@ -183,9 +183,9 @@ export class IntelligentRiskPatternService {
     return patterns;
   }
 
-  private extractSequentialPattern(current: Assessment, previous: Assessment): BehavioralPattern | null {
+    private extractSequentialPattern(current: Assessment, previous: Assessment): BehavioralPattern | null {
     // Analyze risk escalation between consecutive assessments
-    const riskDelta = current.riskScore - previous.riskScore;
+    const riskDelta = (current.riskScore ?? 0) - (previous.riskScore ?? 0);
     const timeDelta = new Date(current.createdAt || Date.now()).getTime() - 
                      new Date(previous.createdAt || Date.now()).getTime();
 
@@ -194,12 +194,12 @@ export class IntelligentRiskPatternService {
         id: `${current.id}_sequential`,
         userId: current.userId,
         patternType: 'stress_escalation',
-        signalSignature: {
+                signalSignature: {
           riskDelta: riskDelta / 100, // Normalize
           timeDelta: Math.min(timeDelta / (60 * 60 * 1000), 24) / 24, // Normalize to 0-1 (hours)
           escalationType: riskDelta > 0 ? 1 : 0, // 1 for escalation, 0 for de-escalation
         },
-        riskOutcome: current.riskScore,
+        riskOutcome: current.riskScore ?? 0,
         contextSimilarity: this.calculateContextSimilarity(current.orderContext as any),
         frequency: 1,
         lastSeen: current.createdAt || new Date(),
